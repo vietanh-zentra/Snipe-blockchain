@@ -1,0 +1,91 @@
+# ------------------------------------------------------------------------------
+# HOW TO RUN (DETAILED)
+#
+# 0) Configure .env in the project root:
+#    TELEGRAM_BOT_TOKEN=...
+#    ALLOWED_TELEGRAM_USER_ID=...
+#    POSTGRES_USER=...
+#    POSTGRES_PASSWORD=...
+#    POSTGRES_DB=...
+#    POSTGRES_PORT=5432
+#    WALLET_ENCRYPTION_PASSWORD=...
+#
+# 1) Build images:
+#    docker compose build
+#
+# 2) Start only PostgreSQL:
+#    docker compose up -d postgres
+#
+# 3) Initialize database (create/migrate tables automatically):
+#    docker compose run --rm init_db
+#
+# 4) Start sniper bot:
+#    docker compose up -d migration_sniper_bot
+#
+# 5) Check logs:
+#    docker compose logs -f postgres
+#    docker compose logs -f migration_sniper_bot
+#
+# 6) Stop services:
+#    docker compose down
+#
+# 7) Stop and remove DB volume/data:
+#    docker compose down -v
+# ------------------------------------------------------------------------------
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: migration-sniper-postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  init_db:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: migration-sniper-bot:latest
+    container_name: migration-sniper-init-db
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["init_db"]
+    restart: "no"
+
+  migration_sniper_bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: migration-sniper-bot:latest
+    container_name: migration-sniper-bot
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["sniper_mode"]
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

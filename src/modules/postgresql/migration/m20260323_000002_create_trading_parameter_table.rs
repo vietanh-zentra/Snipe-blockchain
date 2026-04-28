@@ -1,0 +1,124 @@
+use sea_orm_migration::prelude::*;
+
+#[derive(DeriveMigrationName)]
+pub struct Migration;
+
+#[async_trait::async_trait]
+impl MigrationTrait for Migration {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .create_table(
+                Table::create()
+                    .table(TradingParameter::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(TradingParameter::Id)
+                            .integer()
+                            .not_null()
+                            .auto_increment()
+                            .primary_key(),
+                    )
+                    .col(
+                        ColumnDef::new(TradingParameter::TelegramUserId)
+                            .big_integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(TradingParameter::BuyAmountSol)
+                            .double()
+                            .not_null()
+                            .default(0.1),
+                    )
+                    .col(
+                        ColumnDef::new(TradingParameter::SlippagePercent)
+                            .integer()
+                            .not_null()
+                            .default(50),
+                    )
+                    .col(
+                        ColumnDef::new(TradingParameter::TakeProfit)
+                            .double()
+                            .not_null()
+                            .default(120.0),
+                    )
+                    .col(
+                        ColumnDef::new(TradingParameter::StopLoss)
+                            .double()
+                            .not_null()
+                            .default(80.0),
+                    )
+                    .col(
+                        ColumnDef::new(TradingParameter::Trailing)
+                            .double()
+                            .not_null()
+                            .default(110.0),
+                    )
+                    .col(
+                        ColumnDef::new(TradingParameter::TrailingStop)
+                            .double()
+                            .not_null()
+                            .default(10.0),
+                    )
+                    .col(
+                        ColumnDef::new(TradingParameter::PriorityFeeMicroLamports)
+                            .big_integer()
+                            .not_null()
+                            .default(100000),
+                    )
+                    .col(
+                        ColumnDef::new(TradingParameter::TipFeeSol)
+                            .double()
+                            .not_null()
+                            .default(0.001),
+                    )
+                    .col(
+                        ColumnDef::new(TradingParameter::IsRunning)
+                            .boolean()
+                            .not_null()
+                            .default(false),
+                    )
+                    .col(
+                        ColumnDef::new(TradingParameter::UpdatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .index(
+                        Index::create()
+                            .name("idx-trading-telegram-user-unique")
+                            .col(TradingParameter::TelegramUserId)
+                            .unique(),
+                    )
+                    .to_owned(),
+            )
+            .await
+    }
+
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .drop_table(
+                Table::drop()
+                    .table(TradingParameter::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await
+    }
+}
+
+#[derive(DeriveIden)]
+enum TradingParameter {
+    Table,
+    Id,
+    TelegramUserId,
+    BuyAmountSol,
+    SlippagePercent,
+    TakeProfit,
+    StopLoss,
+    Trailing,
+    TrailingStop,
+    PriorityFeeMicroLamports,
+    TipFeeSol,
+    IsRunning,
+    UpdatedAt,
+}

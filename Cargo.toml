@@ -1,0 +1,61 @@
+[package]
+name = "migration_sniper_bot"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+borsh = "1.5.7"
+chrono = "0.4.42"
+colored = "3.0.0"
+console = "0.16.1"
+dashmap = "6.1.0"
+file_update_monitor = "0.1.2"
+futures = "0.3.31"
+itertools = "0.14.0"
+lazy_static = "1.5.0"
+magic-crypt = "4.0.1"
+once_cell = "1.21.3"
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+    "http2",
+    "stream",
+    "blocking"
+] }
+tonic = { version = "0.13", features = ["tls-webpki-roots"] }
+serde = { version = "1.0.226", features = ["derive"] }
+serde_json = "1.0.145"
+solana-client = "2.2.1"
+solana-relayer-adapter-rust = "3.2.3"
+solana-sdk = "2.2.1"
+solana-sdk-ids = "2.2.1"
+spl-associated-token-account = "7.0.0"
+spl-token = "8.0.0"
+tokio = "1.47.1"
+toml = "0.9.7"
+yellowstone-grpc-client = "8.0.0"
+yellowstone-grpc-proto = "8.0.0"
+notify = "6.1"
+bincode = "1.3"
+base64 = "0.13"
+solana-account-decoder-client-types = "2.3.6"
+async-trait = "0.1"
+teloxide = { version = "0.12", features = ["macros"] }
+dotenvy = "0.15"
+getrandom = "0.2"
+sea-orm = { version = "1.1.19", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros"] }
+sea-orm-migration = { version = "1.1.19", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
+aes-gcm = "0.10.3"
+sha2 = "0.10.9"
+rand = "0.10.0"
+bs58 = "0.5.1"
+
+[[bin]]
+name = "sniper_mode"
+path = "src/entry_point/migration_sniper_mode.rs"
+
+[[bin]]
+name = "init_db"
+path = "src/entry_point/init_db.rs"
+
+
