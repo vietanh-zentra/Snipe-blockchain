@@ -18,26 +18,17 @@ pub async fn execute_trade(trade_data: &DashMap<Pubkey, TokenDatabaseSchema>) {
     };
     let signer_pubkey = keypair.pubkey();
 
+    // ── Bước 1: Thu thập dữ liệu từ DashMap vào Vec ────────────────────
+    // QUAN TRỌNG: Không gọi .await bên trong vòng lặp DashMap.iter()
+    // vì DashMap::Ref không implement Send → gây compile error hoặc deadlock.
+    let mut tokens_to_buy: Vec<TokenDatabaseSchema> = Vec::new();
+    let mut tokens_to_sell: Vec<TokenDatabaseSchema> = Vec::new();
+
     for entry in trade_data.iter() {
         let token_data = entry.value();
-
         match token_data.sniper_trade_state {
             SniperTradeStatus::Migrated => {
-                execute_pumpswap_buy(
-                    &token_data.pumpswap_ix_accounts,
-                    &keypair,
-                    &signer_pubkey,
-                    run_state.trading.buy_amount_sol,
-                    token_data.token_price,
-                    token_data.token_creator,
-                    token_data.is_cashback_coin,
-                    run_state.trading.slippage,
-                );
-                
-                if let Some(mut db_entry) = TOKEN_DB.get(token_data.token_mint).ok().flatten() {
-                    db_entry.sniper_trade_state = SniperTradeStatus::BuySubmitted;
-                    let _ = TOKEN_DB.upsert(token_data.token_mint, db_entry);
-                }
+                tokens_to_buy.push(token_data.clone());
             }
             _ => {
                 let should_sell = (token_data.tp_state == TPMode::Tp
@@ -47,20 +38,84 @@ pub async fn execute_trade(trade_data: &DashMap<Pubkey, TokenDatabaseSchema>) {
                     && token_data.token_sell_status == TokenSellStatus::None;
 
                 if should_sell {
-                    execute_pumpswap_sell(
-                        &token_data.pumpswap_ix_accounts,
-                        &keypair,
-                        &signer_pubkey,
-                        token_data.token_balance,
-                        token_data.token_creator,
-                        token_data.is_cashback_coin,
-                    );
-                    if let Some(mut db_entry) = TOKEN_DB.get(token_data.token_mint).ok().flatten() {
-                        db_entry.token_sell_status = TokenSellStatus::SellTradeSubmitted;
-                        let _ = TOKEN_DB.upsert(token_data.token_mint, db_entry);
-                    }
+                    tokens_to_sell.push(token_data.clone());
                 }
             }
+        }
+    }
+    // DashMap read guards đã được drop tại đây — an toàn để .await
+
+    // ── Bước 2: Xử lý các token cần BÁN (không cần Anti-Rug filter) ────
+    for token_data in &tokens_to_sell {
+        execute_pumpswap_sell(
+            &token_data.pumpswap_ix_accounts,
+            &keypair,
+            &signer_pubkey,
+            token_data.token_balance,
+            token_data.token_creator,
+            token_data.is_cashback_coin,
+        );
+        if let Some(mut db_entry) = TOKEN_DB.get(token_data.token_mint).ok().flatten() {
+            db_entry.token_sell_status = TokenSellStatus::SellTradeSubmitted;
+            let _ = TOKEN_DB.upsert(token_data.token_mint, db_entry);
+        }
+    }
+
+    // ── Bước 3: Xử lý các token cần MUA (chạy Anti-Rug filter trước) ───
+    for token_data in &tokens_to_buy {
+        // ── Anti-Rug Pre-Buy Filter ──────────────────────────────────
+        let anti_rug_cfg = run_state.anti_rug.clone();
+        if anti_rug_cfg.enabled {
+            let mint = token_data.token_mint;
+            let dev  = token_data.token_creator;
+
+            // Giờ .await an toàn vì không còn giữ DashMap guard
+            let filter_result = evaluate_token(&mint, &dev, None, &anti_rug_cfg).await;
+
+            // Log kết quả
+            let mint_str = mint.to_string();
+            let verdict_str = filter_result.verdict.as_db_str();
+            let reject_reason = filter_result.verdict.reason().map(|s| s.to_string());
+            info!(
+                "[ANTI-RUG] Mint: {} | Verdict: {} | Top10: {:?}% | Dev TX: {:?} | Duration: {}ms",
+                mint_str, verdict_str,
+                filter_result.top10_holder_pct,
+                filter_result.dev_tx_count,
+                filter_result.filter_duration_ms,
+            );
+
+            // Nếu FAIL và không phải warn_only → bỏ qua, không mua
+            if filter_result.verdict.is_fail() && !anti_rug_cfg.warn_only {
+                info!(
+                    "[ANTI-RUG] ❌ SKIP {} — {}",
+                    mint_str,
+                    reject_reason.as_deref().unwrap_or("unknown reason")
+                );
+                // Đánh dấu trong TOKEN_DB để tránh process lại
+                if let Some(mut db_entry) = TOKEN_DB.get(mint).ok().flatten() {
+                    db_entry.sniper_trade_state = SniperTradeStatus::RugDetected;
+                    let _ = TOKEN_DB.upsert(mint, db_entry);
+                }
+                continue; // Bỏ qua token này, xử lý token tiếp theo
+            }
+        }
+        // ── Kết thúc Anti-Rug Filter ─────────────────────────────────
+
+        // Token đã pass filter → thực hiện MUA
+        execute_pumpswap_buy(
+            &token_data.pumpswap_ix_accounts,
+            &keypair,
+            &signer_pubkey,
+            run_state.trading.buy_amount_sol,
+            token_data.token_price,
+            token_data.token_creator,
+            token_data.is_cashback_coin,
+            run_state.trading.slippage,
+        );
+
+        if let Some(mut db_entry) = TOKEN_DB.get(token_data.token_mint).ok().flatten() {
+            db_entry.sniper_trade_state = SniperTradeStatus::BuySubmitted;
+            let _ = TOKEN_DB.upsert(token_data.token_mint, db_entry);
         }
     }
 }

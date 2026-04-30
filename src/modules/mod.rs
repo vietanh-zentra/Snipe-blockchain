@@ -9,6 +9,7 @@ pub mod postgresql;
 pub mod encryption;
 pub mod rpc;
 pub mod grpc;
+pub mod anti_rug;
 
 pub use parse::*;
 pub use file::*;
@@ -22,3 +23,4 @@ pub use postgresql::*;
 pub use encryption::*;
 pub use rpc::*;
 pub use grpc::*;
+pub use anti_rug::*;

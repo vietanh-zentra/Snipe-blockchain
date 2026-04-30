@@ -9,6 +9,7 @@ use crate::{
     default_slippage_percent, default_third_party_fee,
     default_take_profit, default_stop_loss, default_trailing, default_trailing_stop,
 };
+use crate::modules::anti_rug::AntiRugConfig;
 
 #[derive(Clone, Debug)]
 pub struct RunTradingParams {
@@ -43,6 +44,8 @@ pub struct TelegramBotRunState {
     pub selected_wallet_pubkey: Option<String>,
     pub selected_wallet_private_key: Option<String>,
     pub trading: RunTradingParams,
+    /// Cấu hình Anti-Rug Intelligence Layer.
+    pub anti_rug: AntiRugConfig,
 }
 
 impl TelegramBotRunState {

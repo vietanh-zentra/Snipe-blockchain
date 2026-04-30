@@ -1,5 +1,5 @@
 use crate::encryption::{decrypt_private_key, encrypt_private_key};
-use super::entities::{trading_parameter, wallet};
+use super::entities::{anti_rug_filter_log, trading_parameter, wallet};
 use super::migration::Migrator;
 use sea_orm::entity::prelude::*;
 use sea_orm::{ActiveValue::Set, Database, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
@@ -317,5 +317,38 @@ async fn ensure_wallet_selected(db: &DatabaseConnection, telegram_user_id: i64) 
         active.is_selected = Set(active.wallet_id.as_ref() == &first_wallet_id);
         active.update(db).await?;
     }
+    Ok(())
+}
+
+// ── Anti-Rug Filter Logging ───────────────────────────────────────────────────
+
+/// Record kết quả anti-rug filter cho một token migration.
+/// Fire-and-forget — không block execution flow.
+pub async fn log_anti_rug_filter_result(
+    db: &DatabaseConnection,
+    token_mint: &str,
+    verdict: &str,
+    reject_reason: Option<String>,
+    top10_holder_pct: Option<f64>,
+    dev_tx_count: Option<u64>,
+    genesis_buy_pct: Option<f64>,
+    genesis_bundle_detected: bool,
+    has_metadata_uri: bool,
+    filter_duration_ms: u64,
+) -> PgResult<()> {
+    let active = anti_rug_filter_log::ActiveModel {
+        token_mint: Set(token_mint.to_string()),
+        created_at: Set(chrono::Utc::now().into()),
+        verdict: Set(verdict.to_string()),
+        reject_reason: Set(reject_reason),
+        top10_holder_pct: Set(top10_holder_pct),
+        dev_tx_count: Set(dev_tx_count.map(|v| v as i64)),
+        genesis_buy_pct: Set(genesis_buy_pct),
+        genesis_bundle_detected: Set(genesis_bundle_detected),
+        has_metadata_uri: Set(has_metadata_uri),
+        filter_duration_ms: Set(Some(filter_duration_ms as i64)),
+        ..Default::default()
+    };
+    active.insert(db).await?;
     Ok(())
 }

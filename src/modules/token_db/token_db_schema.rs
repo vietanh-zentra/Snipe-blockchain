@@ -176,6 +176,8 @@ pub enum SniperTradeStatus {
     SellSubmitted,
     BuyConfirmed,
     SellConfirmed,
+    /// Token bị Anti-Rug filter block — không thực hiện lệnh mua.
+    RugDetected,
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Copy)]
