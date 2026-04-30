@@ -71,7 +71,7 @@ async fn fetch_holder_concentration(
     let top_n = largest_accounts.len().min(10);
     let top10_sum: f64 = largest_accounts[..top_n]
         .iter()
-        .map(|acc| acc.ui_amount.unwrap_or(0.0))
+        .map(|acc| acc.amount.ui_amount.unwrap_or(0.0))
         .sum();
 
     let top10_pct = (top10_sum / total_supply_ui) * 100.0;

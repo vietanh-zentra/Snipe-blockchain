@@ -39,6 +39,7 @@ notify = "6.1"
 bincode = "1.3"
 base64 = "0.13"
 solana-account-decoder-client-types = "2.3.6"
+solana-transaction-status-client-types = "2.3.6"
 async-trait = "0.1"
 teloxide = { version = "0.12", features = ["macros"] }
 dotenvy = "0.15"
@@ -58,4 +59,9 @@ path = "src/entry_point/migration_sniper_mode.rs"
 name = "init_db"
 path = "src/entry_point/init_db.rs"
 
-
+# ── Patch: thay thế protobuf-src bằng bản giả (shim) ────────────────
+# yellowstone-grpc-proto kéo protobuf-src → cố compile protobuf từ source
+# bằng autotools (Unix) → KHÔNG CHẠY ĐƯỢC trên Windows MSVC.
+# Shim này chỉ trả về đường dẫn tới protoc đã cài sẵn trên máy.
+[patch.crates-io]
+protobuf-src = { path = "patches/protobuf-src" }

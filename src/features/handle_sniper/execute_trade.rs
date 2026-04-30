@@ -117,6 +117,29 @@ pub async fn execute_trade(trade_data: &DashMap<Pubkey, TokenDatabaseSchema>) {
             db_entry.sniper_trade_state = SniperTradeStatus::BuySubmitted;
             let _ = TOKEN_DB.upsert(token_data.token_mint, db_entry);
         }
+
+        // ── Module 2: Panic-Sell Monitor (post-buy) ──────────────────
+        if anti_rug_cfg.panic_sell_enabled {
+            use crate::modules::anti_rug::panic_sell::{PanicSellContext, start_panic_sell_monitor};
+
+            let ctx = PanicSellContext {
+                token_mint: token_data.token_mint,
+                pumpswap_accounts: token_data.pumpswap_ix_accounts,
+                keypair: keypair.insecure_clone(),
+                token_balance: token_data.token_balance,
+                token_creator: token_data.token_creator,
+                is_cashback_coin: token_data.is_cashback_coin,
+                jito_tip_lamports: anti_rug_cfg.panic_sell_jito_tip_lamports,
+                watched_wallets: vec![token_data.token_creator], // Monitor dev wallet
+            };
+
+            let _handle = start_panic_sell_monitor(ctx);
+            info!(
+                "[PANIC_SELL] 🔍 Monitor started for mint {}",
+                token_data.token_mint
+            );
+        }
+        // ── End Module 2 ─────────────────────────────────────────────
     }
 }
 

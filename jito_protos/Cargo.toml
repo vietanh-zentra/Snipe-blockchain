@@ -10,5 +10,6 @@ tokio = "1"
 tonic = { version = "0.13", features = ["tls-webpki-roots"] }
 
 [build-dependencies]
-protobuf-src = "1"
 tonic-build = "0.13"
+# protobuf-src removed: fails on Windows (autotools incompatible).
+# Install protoc manually and set PROTOC env var instead.

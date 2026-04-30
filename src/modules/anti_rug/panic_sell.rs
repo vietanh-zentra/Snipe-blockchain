@@ -1,19 +1,16 @@
 //! Module 2: Dynamic Panic-Sell via Jito Bundle.
 //!
-//! Sau khi mua token thành công, monitor ví dev + top holders qua gRPC.
-//! Khi phát hiện SELL intent → gửi Jito bundle để bán TRƯỚC dev/whale.
+//! Sau khi mua token thành công, monitor ví dev + top holders qua RPC polling.
+//! Khi phát hiện SELL intent (balance giảm > 20%) → gửi Jito bundle để bán
+//! TRƯỚC dev/whale, giảm thiểu thiệt hại từ rug-pull.
 //!
 //! Jito Block Engine REST API:
 //!   POST https://mainnet.block-engine.jito.wtf/api/v1/bundles
-//!
-//! Tip accounts (random 1 trong 8):
-//!   96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5
-//!   HFqU5x63VTqvQss8hp11i4bVqkfRtQo3EZTJrPaKYWo7
-//!   ...
 
 use crate::*;
+#[allow(deprecated)]
 use solana_sdk::{
-    instruction::{AccountMeta, Instruction},
+    instruction::Instruction,
     pubkey::Pubkey,
     signer::Signer,
     signature::Keypair,
@@ -21,7 +18,6 @@ use solana_sdk::{
     transaction::Transaction,
 };
 use std::{
-    collections::HashSet,
     str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -92,20 +88,24 @@ pub fn start_panic_sell_monitor(ctx: PanicSellContext) -> PanicSellMonitorHandle
 
 async fn run_monitor(ctx: PanicSellContext, cancel: Arc<AtomicBool>) {
     info!(
-        "[PANIC_SELL] Started monitoring {} wallets for mint {}",
+        "[PANIC_SELL] ▶ Started monitoring {} wallets for mint {}",
         ctx.watched_wallets.len(),
         ctx.token_mint
     );
 
     // Poll mỗi 500ms để kiểm tra token balance của các ví được theo dõi
-    // Approach: so sánh token balance hiện tại vs block trước
-    // Nếu balance giảm đột ngột → trigger panic sell
-    let mut prev_balances: std::collections::HashMap<Pubkey, u64> = std::collections::HashMap::new();
+    // Nếu balance giảm đột ngột > 20% → trigger panic sell
+    let mut prev_balances: std::collections::HashMap<Pubkey, u64> =
+        std::collections::HashMap::new();
 
     // Khởi tạo baseline balances
     for wallet in &ctx.watched_wallets {
         if let Ok(balance) = get_token_balance_for_wallet(&ctx.token_mint, wallet).await {
             prev_balances.insert(*wallet, balance);
+            info!(
+                "[PANIC_SELL]   Tracking wallet {} — initial balance: {}",
+                wallet, balance
+            );
         }
     }
 
@@ -114,7 +114,7 @@ async fn run_monitor(ctx: PanicSellContext, cancel: Arc<AtomicBool>) {
 
     loop {
         if cancel.load(Ordering::Relaxed) {
-            info!("[PANIC_SELL] Monitor cancelled for {}", ctx.token_mint);
+            info!("[PANIC_SELL] ⏹ Monitor cancelled for {}", ctx.token_mint);
             break;
         }
 
@@ -131,7 +131,9 @@ async fn run_monitor(ctx: PanicSellContext, cancel: Arc<AtomicBool>) {
             }
 
             let current_balance =
-                get_token_balance_for_wallet(&ctx.token_mint, wallet).await.unwrap_or(0);
+                get_token_balance_for_wallet(&ctx.token_mint, wallet)
+                    .await
+                    .unwrap_or(0);
 
             let prev = *prev_balances.get(wallet).unwrap_or(&0);
 
@@ -144,7 +146,7 @@ async fn run_monitor(ctx: PanicSellContext, cancel: Arc<AtomicBool>) {
                         wallet, drop_pct, ctx.token_mint
                     );
 
-                    enqueue_panic_sell_detected_alert(
+                    log_panic_sell_alert(
                         &ctx.token_mint.to_string(),
                         &wallet.to_string(),
                         drop_pct,
@@ -161,11 +163,14 @@ async fn run_monitor(ctx: PanicSellContext, cancel: Arc<AtomicBool>) {
         }
     }
 
-    info!("[PANIC_SELL] Monitor stopped for {}", ctx.token_mint);
+    info!("[PANIC_SELL] ⏹ Monitor stopped for {}", ctx.token_mint);
 }
 
 /// Lấy token balance của một wallet cho mint cụ thể.
-async fn get_token_balance_for_wallet(mint: &Pubkey, wallet: &Pubkey) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+async fn get_token_balance_for_wallet(
+    mint: &Pubkey,
+    wallet: &Pubkey,
+) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
     let ata = spl_associated_token_account::get_associated_token_address(wallet, mint);
     match RPC_CLIENT.get_token_account_balance(&ata).await {
         Ok(balance) => Ok(balance.amount.parse::<u64>().unwrap_or(0)),
@@ -197,6 +202,7 @@ async fn trigger_jito_panic_sell(ctx: &PanicSellContext) {
 
     // Thêm Jito tip instruction
     let tip_account = random_jito_tip_account();
+    #[allow(deprecated)]
     let tip_ix = system_instruction::transfer(
         &signer_pubkey,
         &tip_account,
@@ -204,14 +210,16 @@ async fn trigger_jito_panic_sell(ctx: &PanicSellContext) {
     );
     ix.push(tip_ix);
 
-    // Lấy blockhash mới nhất
-    let recent_blockhash = match RECENT_BLOCKHASH.try_read() {
-        Ok(guard) => *guard,
-        Err(_) => {
-            eprintln!("[PANIC_SELL] Cannot get blockhash");
-            // Fallback: gửi via normal transaction
+    // Lấy blockhash mới nhất từ RPC
+    let recent_blockhash = match RPC_CLIENT.get_latest_blockhash().await {
+        Ok(bh) => bh,
+        Err(e) => {
+            error!("[PANIC_SELL] Cannot get blockhash: {e}. Falling back to normal TX.");
+            // Fallback: gửi via normal transaction (không có Jito tip)
+            ix.pop(); // Remove tip instruction
+            let keypair2 = ctx.keypair.insecure_clone();
             tokio::spawn(async move {
-                let _ = send_0slot_transaction(ix, keypair).await;
+                let _ = send_0slot_transaction(ix, keypair2).await;
             });
             return;
         }
@@ -233,12 +241,12 @@ async fn trigger_jito_panic_sell(ctx: &PanicSellContext) {
             );
         }
         Err(e) => {
-            eprintln!("[PANIC_SELL] Jito bundle failed: {e}. Falling back to normal TX.");
-            // Fallback to normal send
+            error!("[PANIC_SELL] Jito bundle failed: {e}. Falling back to normal TX.");
+            // Fallback: remove tip, send via normal path
+            ix.pop(); // Remove tip instruction
             let keypair2 = ctx.keypair.insecure_clone();
-            let ix_clone = ix.clone();
             tokio::spawn(async move {
-                let _ = send_0slot_transaction(ix_clone, keypair2).await;
+                let _ = send_0slot_transaction(ix, keypair2).await;
             });
         }
     }
@@ -246,8 +254,8 @@ async fn trigger_jito_panic_sell(ctx: &PanicSellContext) {
 
 /// Chọn ngẫu nhiên một Jito tip account.
 fn random_jito_tip_account() -> Pubkey {
-    use rand::Rng;
-    let idx = rand::thread_rng().gen_range(0..JITO_TIP_ACCOUNTS.len());
+    use rand::RngExt;
+    let idx = rand::rng().random_range(0..JITO_TIP_ACCOUNTS.len());
     Pubkey::from_str(JITO_TIP_ACCOUNTS[idx]).expect("Valid Jito tip account")
 }
 
@@ -293,19 +301,10 @@ async fn submit_jito_bundle(
     }
 }
 
-// ── Placeholder cho alert function (sẽ implement trong telegram_alert) ─────
-
-fn enqueue_panic_sell_detected_alert(mint: &str, seller_wallet: &str, drop_pct: f64) {
-    let msg = format!(
-        "🚨 *PANIC SELL DETECTED*\n\
-        Mint: `{}`\n\
-        Seller: `{}`\n\
-        Balance drop: {:.1}%\n\
-        → Triggering emergency sell via Jito!",
+/// Log panic sell alert (Telegram integration sẽ thêm ở Phase 3).
+fn log_panic_sell_alert(mint: &str, seller_wallet: &str, drop_pct: f64) {
+    info!(
+        "🚨 PANIC SELL DETECTED — Mint: {} | Seller: {} | Drop: {:.1}%",
         mint, seller_wallet, drop_pct
     );
-    // Queue Telegram alert
-    if let Some(sender) = crate::modules::telegram_alert::ALERT_SENDER.get() {
-        let _ = sender.try_send(msg);
-    }
 }
