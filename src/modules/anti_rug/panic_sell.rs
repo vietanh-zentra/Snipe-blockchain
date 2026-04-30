@@ -39,7 +39,7 @@ pub const JITO_TIP_ACCOUNTS: &[&str] = &[
     "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
 ];
 
-const JITO_BUNDLE_ENDPOINT: &str = "https://mainnet.block-engine.jito.wtf/api/v1/bundles";
+const JITO_BUNDLE_ENDPOINT: &str = "https://frankfurt.mainnet.block-engine.jito.wtf/api/v1/bundles";
 
 /// Handle để cancel panic-sell monitor từ bên ngoài.
 pub struct PanicSellMonitorHandle {

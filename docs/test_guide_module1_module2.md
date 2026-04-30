@@ -1,7 +1,7 @@
-# Hướng Dẫn Test Module 1 & Module 2 + Cách Hoạt Động Module 2
+# Hướng Dẫn Test Module 1, 2, 3, 4 + Cách Hoạt Động Chi Tiết
 
 > **Ngày cập nhật:** 01/05/2026
-> **Trạng thái:** Module 1 ✅ | Module 2 ✅
+> **Trạng thái:** Module 1 ✅ | Module 2 ✅ | Module 3 ✅ | Module 4 ✅
 
 ---
 
@@ -10,7 +10,13 @@
 2. [Test Module 1: Holder Concentration Filter](#2-test-module-1-holder-concentration-filter)
 3. [Test Module 2: Panic-Sell via Jito Bundle](#3-test-module-2-panic-sell-via-jito-bundle)
 4. [Cách hoạt động Module 2 (chi tiết kỹ thuật)](#4-cách-hoạt-động-module-2-chi-tiết-kỹ-thuật)
-5. [Xử lý sự cố](#5-xử-lý-sự-cố)
+5. [Test Module 3: Dev Wallet Profiler](#5-test-module-3-dev-wallet-profiler)
+6. [Cách hoạt động Module 3 (chi tiết kỹ thuật)](#6-cách-hoạt-động-module-3-chi-tiết-kỹ-thuật)
+7. [Test Module 4: Genesis Bundle Detector](#7-test-module-4-genesis-bundle-detector)
+8. [Cách hoạt động Module 4 (chi tiết kỹ thuật)](#8-cách-hoạt-động-module-4-chi-tiết-kỹ-thuật)
+9. [Test Module 5: Metadata Checker](#9-test-module-5-metadata-checker)
+10. [Cách hoạt động Module 5 (chi tiết kỹ thuật)](#10-cách-hoạt-động-module-5-chi-tiết-kỹ-thuật)
+11. [Xử lý sự cố](#11-xử-lý-sự-cố)
 
 ---
 
@@ -275,7 +281,370 @@ Jito bundle được validator **xử lý trước** các TX thường → bot b
 
 ---
 
-## 5. Xử lý sự cố
+## 5. Test Module 3: Dev Wallet Profiler
+
+### Module 3 làm gì?
+Trước khi mua token, bot kiểm tra **lịch sử giao dịch của ví dev**.
+Ví dev mới tạo (ít TX, tuổi vài giờ) → nguy cơ rug cao → **SKIP** hoặc **WARN**.
+
+Module 3 chạy **song song** với Module 1 và Module 5 → không tăng tổng thời gian filter.
+
+### Cách test
+
+#### Bước 1: Chạy bot
+```powershell
+cargo run --bin sniper_mode
+```
+
+#### Bước 2: Quan sát log trong PowerShell
+**Dev wallet đủ tuổi (PASS):**
+```
+[ANTI-RUG] Mint: 7xKX...abc | Verdict: PASS | Top10: 22.5% | Dev TX: 45 | Duration: 850ms
+```
+
+**Dev wallet mới tạo (FAIL):**
+```
+[ANTI-RUG] ❌ SKIP 7xKX...abc — [M3-Dev] Dev wallet has only 3 TXs (min: 10). Age: 2 hours
+```
+
+**RPC timeout:**
+```
+[ANTI-RUG] ❌ SKIP 7xKX...abc — [M3-Dev] Dev profiler error: Dev wallet RPC timeout
+```
+
+### Cấu hình Module 3
+
+| Tham số | Giá trị mặc định | Ý nghĩa |
+|---------|-------------------|---------|
+| `dev_profiler_enabled` | `true` | Bật/tắt Module 3 |
+| `min_dev_tx_count` | `10` | Số TX tối thiểu để pass |
+| `filter_timeout_ms` | `1500` | Timeout cho RPC call |
+
+### Thay đổi ngưỡng
+
+Trong `config.rs`:
+```rust
+min_dev_tx_count: 20,  // Yêu cầu ít nhất 20 TX (nghiêm ngặt hơn)
+```
+
+---
+
+## 6. Cách hoạt động Module 3 (chi tiết kỹ thuật)
+
+### 6.1 Luồng xử lý
+
+```
+Pre-Buy Filter (pre_buy_filter.rs)
+    ↓
+┌─── Module 1: Holder Concentration ───┐
+│   (chạy song song)                   │
+├─── Module 3: Dev Wallet Profiler ────┤
+│   (chạy song song)                   │
+├─── Module 5: Metadata Checker ───────┤
+│   (chạy song song)                   │
+└──────────────────────────────────────┘
+    ↓
+Tổng hợp kết quả → PASS / WARN / FAIL
+```
+
+Tổng thời gian = max(M1, M3, M5) — **không cộng dồn!**
+
+### 6.2 Logic chi tiết
+
+```rust
+// File: dev_wallet_profiler.rs — check_dev_wallet()
+
+// 1. Query RPC: lấy 50 TX gần nhất của dev wallet
+let sigs = RPC_CLIENT
+    .get_signatures_for_address_with_config(dev_pubkey, config)
+    .await;
+
+// 2. Đếm số TX
+let tx_count = sigs.len();  // tối đa 50
+
+// 3. Tính tuổi ví từ TX cũ nhất
+let oldest_timestamp = sigs.last().block_time;  // unix timestamp
+let age_hours = (now - oldest_timestamp) / 3600;
+
+// 4. So sánh với ngưỡng
+if tx_count < min_tx_count {
+    return Err("Dev wallet has only 3 TXs (min: 10). Age: 2 hours");
+} else {
+    return Ok(Some(tx_count));
+}
+```
+
+### 6.3 Struct DevWalletProfile
+
+```rust
+pub struct DevWalletProfile {
+    pub tx_count: u64,              // Số TX tìm được (max 50)
+    pub oldest_tx_timestamp: Option<i64>,  // Unix timestamp TX cũ nhất
+    pub estimated_age_hours: Option<u64>,  // Tuổi ví (giờ)
+}
+```
+
+### 6.4 Tích hợp trong Pre-Buy Filter
+
+```rust
+// File: pre_buy_filter.rs
+let (holder_result, dev_result, meta_result) = join!(
+    check_holder_concentration(),  // Module 1
+    check_dev_wallet(),            // Module 3 ← ĐÂY
+    check_has_metadata(),          // Module 5
+);
+```
+
+### 6.5 Files liên quan
+
+| File | Vai trò |
+|------|---------|
+| `src/modules/anti_rug/dev_wallet_profiler.rs` | Logic chính Module 3 |
+| `src/modules/anti_rug/pre_buy_filter.rs` | Gọi check_dev_wallet() |
+| `src/modules/anti_rug/config.rs` | Cấu hình ngưỡng |
+
+---
+
+## 7. Test Module 4: Genesis Bundle Detector
+
+### Module 4 làm gì?
+Quét **genesis block** (block đầu tiên tạo token) để phát hiện:
+- Nhiều ví mua cùng lúc trong 1 block (bundled buys)
+- Tổng % supply bị mua quá lớn (> 50%)
+
+Đây là dấu hiệu **rug-pull có tổ chức**: dev tạo nhiều ví, mua gom supply, rồi dump.
+
+### Cách test
+
+#### Bước 1: Bật Module 4 (mặc định TẮT)
+Trong `config.rs`:
+```rust
+genesis_detector_enabled: true,  // Bật lên
+```
+
+> **Lưu ý:** Module 4 mặc định TẮT vì tốn RPC call nặng (get_block).
+
+#### Bước 2: Chạy bot & quan sát log
+```powershell
+cargo run --bin sniper_mode
+```
+
+**Không có bundled buys (PASS):**
+```
+[ANTI-RUG] Mint: 7xKX...abc | Verdict: PASS | Genesis: 12.5% | Duration: 1200ms
+```
+
+**Phát hiện bundle (FAIL):**
+```
+[ANTI-RUG] ❌ SKIP 7xKX...abc — [M4-Genesis] Genesis bundle detected: 65.3% supply bought by 5 wallets in genesis block
+```
+
+### Cấu hình Module 4
+
+| Tham số | Giá trị mặc định | Ý nghĩa |
+|---------|-------------------|---------|
+| `genesis_detector_enabled` | `false` | Bật/tắt Module 4 |
+| `max_genesis_buy_pct` | `50.0` | Ngưỡng tối đa % supply mua trong genesis |
+| `max_clustered_wallets` | `3` | Số ví cluster tối đa cho phép |
+
+---
+
+## 8. Cách hoạt động Module 4 (chi tiết kỹ thuật)
+
+### 8.1 Luồng xử lý
+
+```
+check_genesis_bundles(mint, creation_slot, total_supply, ...)
+    ↓
+RPC: get_block_with_config(creation_slot)
+    ↓
+Lọc transactions liên quan tới mint
+    ↓
+Đếm buyers + tổng % supply mua
+    ↓
+Nếu (unique_buyers > 3) VÀ (genesis_buy_pct > 50%):
+    → bundle_detected = true → FAIL
+Ngược lại:
+    → Ok(genesis_buy_pct)
+```
+
+### 8.2 Logic phát hiện bundle
+
+```rust
+// File: genesis_detector.rs
+
+// 1. Lấy toàn bộ block tại creation_slot
+let block = RPC_CLIENT.get_block_with_config(creation_slot, config).await;
+
+// 2. Quét từng transaction trong block
+for tx in block.transactions {
+    // Bỏ qua TX không liên quan tới mint
+    if !tx.contains(mint_address) { continue; }
+
+    // 3. Trích xuất post_token_balances
+    for balance in tx.meta.post_token_balances {
+        if balance.mint == mint {
+            buyer_amounts[owner] += balance.ui_amount;
+        }
+    }
+}
+
+// 4. Tính tổng
+let genesis_buy_pct = total_bought / total_supply * 100;
+let bundle_detected = unique_buyers > 3 && genesis_buy_pct > 50;
+```
+
+### 8.3 Struct GenesisAnalysis
+
+```rust
+pub struct GenesisAnalysis {
+    pub genesis_buy_pct: f64,     // % supply mua trong genesis
+    pub unique_buyers: usize,     // Số ví unique đã mua
+    pub bundle_detected: bool,    // Có pattern bundle không
+}
+```
+
+### 8.4 Tích hợp trong Pre-Buy Filter
+
+Module 4 chạy **SAU** Module 1, 3, 5 (vì cần `creation_slot`):
+
+```rust
+// File: pre_buy_filter.rs
+let genesis_result = if config.genesis_detector_enabled {
+    let total_supply = get_total_supply(mint).await;
+    check_genesis_bundles(mint, slot, total_supply, ...).await
+};
+```
+
+### 8.5 Files liên quan
+
+| File | Vai trò |
+|------|---------|
+| `src/modules/anti_rug/genesis_detector.rs` | Logic chính Module 4 |
+| `src/modules/anti_rug/pre_buy_filter.rs` | Gọi check_genesis_bundles() |
+| `src/modules/anti_rug/config.rs` | Cấu hình ngưỡng |
+
+---
+
+## 9. Test Module 5: Metadata Checker
+
+### Module 5 làm gì?
+Kiểm tra **Metaplex on-chain metadata** của token. Token hợp lệ thường có URI trỏ tới website/logo.
+Token không có metadata → dấu hiệu scam/low-effort → **WARN** (chỉ cảnh báo, không block).
+
+### Cách test
+
+#### Bước 1: Chạy bot
+```powershell
+cargo run --bin sniper_mode
+```
+
+#### Bước 2: Quan sát log trong PowerShell
+**Token có metadata (PASS):**
+```
+[ANTI-RUG] Mint: 7xKX...abc | Verdict: PASS | Has Metadata: true | Duration: 650ms
+```
+
+**Token không có metadata (WARN):**
+```
+[ANTI-RUG] Mint: 7xKX...abc | Verdict: WARN | Has Metadata: false
+[M5-Metadata] Token has no metadata URI
+```
+
+> **Lưu ý:** Module 5 chỉ **WARN**, không FAIL — vì một số token hợp lệ cũng có thể chưa kịp thêm metadata.
+
+### Cấu hình Module 5
+
+| Tham số | Giá trị mặc định | Ý nghĩa |
+|---------|-------------------|---------|
+| `metadata_checker_enabled` | `true` | Bật/tắt Module 5 |
+| `filter_timeout_ms` | `1500` | Timeout cho RPC call |
+
+---
+
+## 10. Cách hoạt động Module 5 (chi tiết kỹ thuật)
+
+### 10.1 Luồng xử lý
+
+```
+check_has_metadata(mint, timeout_ms)
+    ↓
+Derive Metaplex PDA:
+  seeds = ["metadata", METAPLEX_PROGRAM_ID, mint]
+    ↓
+RPC: get_account(metadata_pda)
+    ↓
+Account tồn tại?
+  NO  → has_uri = false → WARN
+  YES → Parse binary data
+    ↓
+Parse: key(1) + update_auth(32) + mint(32) + name(4+N) + symbol(4+N) + uri(4+N)
+    ↓
+URI rỗng? → WARN
+URI có giá trị? → PASS
+```
+
+### 10.2 Parse Metaplex binary data
+
+```rust
+// File: metadata_checker.rs — parse_metadata_uri()
+
+// Metaplex Metadata layout:
+// Byte 0:      key (enum, 1 byte)
+// Byte 1-32:   update_authority (32 bytes)
+// Byte 33-64:  mint (32 bytes)
+// Byte 65+:    name (4 bytes length + N bytes data)
+//              symbol (4 bytes length + N bytes data)
+//              uri (4 bytes length + N bytes data)  ← CẦN LẤY
+
+let offset = 65; // Skip key + update_auth + mint
+let name = read_length_prefixed_string(data, &mut pos);
+let _symbol = read_length_prefixed_string(data, &mut pos);
+let uri = read_length_prefixed_string(data, &mut pos);
+
+let has_uri = !uri.trim().is_empty();
+```
+
+### 10.3 Struct MetadataCheckResult
+
+```rust
+pub struct MetadataCheckResult {
+    pub metadata_account_exists: bool,  // Account có tồn tại
+    pub has_uri: bool,                  // URI có giá trị
+    pub uri: Option<String>,            // URI value
+    pub name: Option<String>,           // Token name
+}
+```
+
+### 10.4 Tích hợp trong Pre-Buy Filter
+
+Chạy **song song** với Module 1 và Module 3:
+
+```rust
+// File: pre_buy_filter.rs
+let (holder_result, dev_result, meta_result) = join!(
+    check_holder_concentration(),  // Module 1
+    check_dev_wallet(),            // Module 3
+    check_has_metadata(),          // Module 5 ← ĐÂY
+);
+
+// Kết quả: chỉ WARN, không FAIL
+if !has_metadata {
+    warn_reasons.push("[M5-Metadata] Token has no metadata URI");
+}
+```
+
+### 10.5 Files liên quan
+
+| File | Vai trò |
+|------|---------|
+| `src/modules/anti_rug/metadata_checker.rs` | Logic chính Module 5 (187 dòng) |
+| `src/modules/anti_rug/pre_buy_filter.rs` | Gọi check_has_metadata() |
+| `src/modules/anti_rug/config.rs` | Cấu hình bật/tắt |
+
+---
+
+## 11. Xử lý sự cố
 
 ### Bot không phản hồi trên Telegram
 - Kiểm tra `TELEGRAM_BOT_TOKEN` trong `.env` có đúng không
@@ -285,6 +654,13 @@ Jito bundle được validator **xử lý trước** các TX thường → bot b
 - gRPC endpoint không hợp lệ hoặc không hỗ trợ Yellowstone
 - Đăng ký [Helius Developer](https://helius.dev) ($49/tháng) hoặc [Triton](https://triton.one) (free)
 - Bot vẫn chạy Telegram UI bình thường, chỉ không nhận migration events
+
+### Lỗi OpenSSL (mở PowerShell mới)
+```powershell
+$env:OPENSSL_DIR="C:\Program Files\OpenSSL-Win64"
+$env:OPENSSL_LIB_DIR="C:\Program Files\OpenSSL-Win64\lib\VC\x64\MD"
+$env:OPENSSL_INCLUDE_DIR="C:\Program Files\OpenSSL-Win64\include"
+```
 
 ### Lỗi "linking with link.exe failed: ___chkstk_ms"
 ```powershell
@@ -300,4 +676,4 @@ Nhấn **Ctrl + C** trong cửa sổ PowerShell.
 
 ---
 
-> **Tiếp theo:** Module 3 (Dev Wallet Profiler) — kiểm tra tuổi ví dev, lịch sử giao dịch.
+> **Tất cả 5 modules đã hoàn thành!** M1 ✅ | M2 ✅ | M3 ✅ | M4 ✅ | M5 ✅
