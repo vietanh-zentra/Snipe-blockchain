@@ -5,8 +5,24 @@ use sea_orm::entity::prelude::*;
 use sea_orm::{ActiveValue::Set, Database, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
 use sea_orm_migration::MigratorTrait;
 use std::env;
+use tokio::sync::OnceCell;
 
 type PgResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+/// Fix BUG-2: Shared DB connection pool — khởi tạo 1 lần, tái sử dụng.
+/// Tránh mở connection mới mỗi khi log filter result.
+static SHARED_DB_POOL: OnceCell<DatabaseConnection> = OnceCell::const_new();
+
+/// Lấy hoặc khởi tạo shared DB connection pool.
+pub async fn get_shared_db() -> PgResult<&'static DatabaseConnection> {
+    SHARED_DB_POOL
+        .get_or_try_init(|| async {
+            let db_url = resolve_database_url_from_env()?;
+            let db = Database::connect(&db_url).await?;
+            Ok(db)
+        })
+        .await
+}
 
 #[derive(Clone, Debug)]
 pub struct WalletRecord {

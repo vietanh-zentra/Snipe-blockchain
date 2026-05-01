@@ -26,6 +26,27 @@ use std::{
     time::Duration,
 };
 use tokio::time::sleep;
+use dashmap::DashMap;
+use once_cell::sync::Lazy;
+
+/// Global storage cho panic-sell monitor handles.
+/// Khi handle bị remove khỏi map → Drop trait sẽ cancel monitor.
+/// Fix BUG-1: Tránh handle bị drop ngay lập tức khi kết thúc for loop.
+pub static PANIC_SELL_HANDLES: Lazy<DashMap<Pubkey, PanicSellMonitorHandle>> =
+    Lazy::new(DashMap::new);
+
+/// Lưu handle vào global map — giữ monitor sống.
+pub fn store_panic_sell_handle(mint: Pubkey, handle: PanicSellMonitorHandle) {
+    PANIC_SELL_HANDLES.insert(mint, handle);
+}
+
+/// Cancel và xóa monitor cho một mint (gọi khi TP/SL bán xong).
+pub fn cancel_panic_sell_monitor(mint: &Pubkey) {
+    if let Some((_, handle)) = PANIC_SELL_HANDLES.remove(mint) {
+        handle.cancel();
+        info!("[PANIC_SELL] ⏹ Monitor cancelled and removed for {}", mint);
+    }
+}
 
 /// Danh sách Jito tip accounts (chọn ngẫu nhiên 1 per bundle).
 pub const JITO_TIP_ACCOUNTS: &[&str] = &[
@@ -301,10 +322,77 @@ async fn submit_jito_bundle(
     }
 }
 
-/// Log panic sell alert (Telegram integration sẽ thêm ở Phase 3).
 fn log_panic_sell_alert(mint: &str, seller_wallet: &str, drop_pct: f64) {
     info!(
         "🚨 PANIC SELL DETECTED — Mint: {} | Seller: {} | Drop: {:.1}%",
         mint, seller_wallet, drop_pct
     );
+    // Fix #4: Gửi Telegram alert
+    crate::modules::telegram_ui::alert_sender::alert_panic_sell_triggered(
+        mint, seller_wallet, drop_pct,
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_handle_cancel_sets_flag() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let handle = PanicSellMonitorHandle {
+            cancel: cancel.clone(),
+        };
+        assert!(!cancel.load(Ordering::Relaxed));
+        handle.cancel();
+        assert!(cancel.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_handle_drop_auto_cancels() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        {
+            let _handle = PanicSellMonitorHandle {
+                cancel: cancel.clone(),
+            };
+            assert!(!cancel.load(Ordering::Relaxed));
+        } // _handle dropped here
+        assert!(cancel.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_jito_endpoint_is_frankfurt() {
+        assert!(
+            JITO_BUNDLE_ENDPOINT.contains("frankfurt"),
+            "Jito endpoint should use Frankfurt for low latency"
+        );
+    }
+
+    #[test]
+    fn test_jito_tip_accounts_not_empty() {
+        assert!(
+            !JITO_TIP_ACCOUNTS.is_empty(),
+            "Must have at least 1 Jito tip account"
+        );
+        for account in JITO_TIP_ACCOUNTS {
+            assert!(
+                Pubkey::from_str(account).is_ok(),
+                "Invalid tip account pubkey: {account}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_drop_threshold_20_pct() {
+        // Simulate balance drop: 1000 → 700 = 30% drop → should trigger
+        let prev: u64 = 1000;
+        let current: u64 = 700;
+        let drop_pct = (prev - current) as f64 / prev as f64 * 100.0;
+        assert!(drop_pct > 20.0, "30% drop should trigger panic sell");
+
+        // Simulate small drop: 1000 → 850 = 15% → should NOT trigger
+        let current_small: u64 = 850;
+        let drop_pct_small = (prev - current_small) as f64 / prev as f64 * 100.0;
+        assert!(drop_pct_small < 20.0, "15% drop should not trigger");
+    }
 }

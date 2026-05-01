@@ -24,4 +24,4 @@ pub mod pre_buy_filter;
 pub use config::AntiRugConfig;
 pub use filter_result::{AntiRugFilterResult, FilterVerdict};
 pub use pre_buy_filter::evaluate_token;
-pub use panic_sell::{PanicSellContext, PanicSellMonitorHandle, start_panic_sell_monitor};
+pub use panic_sell::{PanicSellContext, PanicSellMonitorHandle, start_panic_sell_monitor, store_panic_sell_handle, cancel_panic_sell_monitor, PANIC_SELL_HANDLES};

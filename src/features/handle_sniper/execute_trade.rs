@@ -47,6 +47,11 @@ pub async fn execute_trade(trade_data: &DashMap<Pubkey, TokenDatabaseSchema>) {
 
     // ── Bước 2: Xử lý các token cần BÁN (không cần Anti-Rug filter) ────
     for token_data in &tokens_to_sell {
+        // Fix BUG-1: Cancel panic-sell monitor khi bán token (TP/SL)
+        crate::modules::anti_rug::panic_sell::cancel_panic_sell_monitor(
+            &token_data.token_mint,
+        );
+
         execute_pumpswap_sell(
             &token_data.pumpswap_ix_accounts,
             &keypair,
@@ -69,27 +74,69 @@ pub async fn execute_trade(trade_data: &DashMap<Pubkey, TokenDatabaseSchema>) {
             let mint = token_data.token_mint;
             let dev  = token_data.token_creator;
 
-            // Giờ .await an toàn vì không còn giữ DashMap guard
-            let filter_result = evaluate_token(&mint, &dev, None, &anti_rug_cfg).await;
+            // Fix #5: Lấy creation slot từ RPC (transaction signature gần nhất của mint)
+            let creation_slot = match RPC_CLIENT
+                .get_signatures_for_address(&mint)
+                .await
+            {
+                Ok(sigs) if !sigs.is_empty() => sigs.last().and_then(|s| Some(s.slot)),
+                _ => None,
+            };
+
+            let filter_result = evaluate_token(&mint, &dev, creation_slot, &anti_rug_cfg).await;
 
             // Log kết quả
             let mint_str = mint.to_string();
             let verdict_str = filter_result.verdict.as_db_str();
             let reject_reason = filter_result.verdict.reason().map(|s| s.to_string());
             info!(
-                "[ANTI-RUG] Mint: {} | Verdict: {} | Top10: {:?}% | Dev TX: {:?} | Duration: {}ms",
+                "[ANTI-RUG] Mint: {} | Verdict: {} | Top10: {:?}% | Dev TX: {:?} | Genesis: {:?}% | Meta: {} | Duration: {}ms",
                 mint_str, verdict_str,
                 filter_result.top10_holder_pct,
                 filter_result.dev_tx_count,
+                filter_result.genesis_buy_pct,
+                filter_result.has_metadata_uri,
                 filter_result.filter_duration_ms,
             );
 
+            // Fix #1 + BUG-2: Log kết quả filter vào PostgreSQL (fire-and-forget, shared pool)
+            let db_mint = mint_str.clone();
+            let db_verdict = verdict_str.to_string();
+            let db_reason = reject_reason.clone();
+            let db_top10 = filter_result.top10_holder_pct;
+            let db_dev_tx = filter_result.dev_tx_count;
+            let db_genesis = filter_result.genesis_buy_pct;
+            let db_genesis_bundle = filter_result.genesis_bundle_detected;
+            let db_meta = filter_result.has_metadata_uri;
+            let db_duration = filter_result.filter_duration_ms;
+            tokio::spawn(async move {
+                if let Ok(db) = crate::modules::postgresql::db::get_shared_db().await {
+                    let _ = crate::modules::postgresql::db::log_anti_rug_filter_result(
+                        db,
+                        &db_mint,
+                        &db_verdict,
+                        db_reason,
+                        db_top10,
+                        db_dev_tx,
+                        db_genesis,
+                        db_genesis_bundle,
+                        db_meta,
+                        db_duration,
+                    )
+                    .await;
+                }
+            });
+
             // Nếu FAIL và không phải warn_only → bỏ qua, không mua
             if filter_result.verdict.is_fail() && !anti_rug_cfg.warn_only {
+                let reason_str = reject_reason.as_deref().unwrap_or("unknown reason");
                 info!(
                     "[ANTI-RUG] ❌ SKIP {} — {}",
-                    mint_str,
-                    reject_reason.as_deref().unwrap_or("unknown reason")
+                    mint_str, reason_str
+                );
+                // Fix #2: Gửi Telegram alert khi skip token
+                crate::modules::telegram_ui::alert_sender::alert_token_filtered(
+                    &mint_str, reason_str,
                 );
                 // Đánh dấu trong TOKEN_DB để tránh process lại
                 if let Some(mut db_entry) = TOKEN_DB.get(mint).ok().flatten() {
@@ -119,6 +166,7 @@ pub async fn execute_trade(trade_data: &DashMap<Pubkey, TokenDatabaseSchema>) {
         }
 
         // ── Module 2: Panic-Sell Monitor (post-buy) ──────────────────
+        let anti_rug_cfg = run_state.anti_rug.clone();
         if anti_rug_cfg.panic_sell_enabled {
             use crate::modules::anti_rug::panic_sell::{PanicSellContext, start_panic_sell_monitor};
 
@@ -130,10 +178,15 @@ pub async fn execute_trade(trade_data: &DashMap<Pubkey, TokenDatabaseSchema>) {
                 token_creator: token_data.token_creator,
                 is_cashback_coin: token_data.is_cashback_coin,
                 jito_tip_lamports: anti_rug_cfg.panic_sell_jito_tip_lamports,
-                watched_wallets: vec![token_data.token_creator], // Monitor dev wallet
+                watched_wallets: vec![token_data.token_creator],
             };
 
-            let _handle = start_panic_sell_monitor(ctx);
+            let handle = start_panic_sell_monitor(ctx);
+            // Fix BUG-1: Lưu handle vào global map để monitor không bị cancel
+            // Handle sẽ bị remove + cancel khi TP/SL bán xong
+            crate::modules::anti_rug::panic_sell::store_panic_sell_handle(
+                token_data.token_mint, handle,
+            );
             info!(
                 "[PANIC_SELL] 🔍 Monitor started for mint {}",
                 token_data.token_mint

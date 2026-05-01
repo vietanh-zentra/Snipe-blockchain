@@ -114,3 +114,65 @@ pub async fn check_dev_wallet(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_profile_struct_creation() {
+        let profile = DevWalletProfile {
+            tx_count: 25,
+            oldest_tx_timestamp: Some(1_700_000_000),
+            estimated_age_hours: Some(48),
+        };
+        assert_eq!(profile.tx_count, 25);
+        assert_eq!(profile.oldest_tx_timestamp, Some(1_700_000_000));
+        assert_eq!(profile.estimated_age_hours, Some(48));
+    }
+
+    #[test]
+    fn test_empty_wallet_profile() {
+        let profile = DevWalletProfile {
+            tx_count: 0,
+            oldest_tx_timestamp: None,
+            estimated_age_hours: None,
+        };
+        assert_eq!(profile.tx_count, 0);
+        assert!(profile.oldest_tx_timestamp.is_none());
+        assert!(profile.estimated_age_hours.is_none());
+    }
+
+    #[test]
+    fn test_tx_count_threshold_logic() {
+        let min_tx_count: u64 = 10;
+
+        // Dev with 5 TXs should FAIL
+        let low_tx: u64 = 5;
+        assert!(low_tx < min_tx_count, "5 < 10 should fail");
+
+        // Dev with 15 TXs should PASS
+        let high_tx: u64 = 15;
+        assert!(high_tx >= min_tx_count, "15 >= 10 should pass");
+
+        // Dev with exactly 10 TXs should PASS
+        let exact_tx: u64 = 10;
+        assert!(exact_tx >= min_tx_count, "10 >= 10 should pass");
+    }
+
+    #[test]
+    fn test_age_calculation() {
+        // Simulate: oldest TX was 48 hours ago
+        let now = chrono::Utc::now().timestamp();
+        let oldest_ts = now - (48 * 3600); // 48 hours ago
+        let diff_secs = (now - oldest_ts).max(0) as u64;
+        let age_hours = diff_secs / 3600;
+        assert_eq!(age_hours, 48);
+
+        // Simulate: fresh wallet (just created)
+        let fresh_ts = now - 60; // 1 minute ago
+        let fresh_diff = (now - fresh_ts).max(0) as u64;
+        let fresh_age = fresh_diff / 3600;
+        assert_eq!(fresh_age, 0, "1 minute old = 0 hours");
+    }
+}

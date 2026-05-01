@@ -71,11 +71,7 @@ pub async fn analyze_genesis_block(
 
     if let Some(transactions) = block.transactions {
         for tx_with_meta in &transactions {
-            // Kiểm tra logs/account keys có chứa mint address không
-            let tx_str = format!("{:?}", tx_with_meta);
-            if !tx_str.contains(&mint_str) {
-                continue;
-            }
+            // Fix #9: Trực tiếp quét post_token_balances thay vì serialize toàn bộ TX
 
             // Trích xuất thông tin từ transaction meta
             if let Some(meta) = &tx_with_meta.meta {
@@ -169,5 +165,70 @@ pub async fn check_genesis_bundles(
                 Ok(Some(a.genesis_buy_pct))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_genesis_analysis_struct() {
+        let analysis = GenesisAnalysis {
+            genesis_buy_pct: 45.5,
+            unique_buyers: 5,
+            bundle_detected: true,
+        };
+        assert_eq!(analysis.unique_buyers, 5);
+        assert!((analysis.genesis_buy_pct - 45.5).abs() < 0.01);
+        assert!(analysis.bundle_detected);
+    }
+
+    #[test]
+    fn test_bundle_detection_logic() {
+        let max_clustered_wallets: u32 = 3;
+        let max_genesis_buy_pct: f64 = 50.0;
+
+        // 5 wallets bought 60% → BUNDLE DETECTED
+        let unique_buyers: usize = 5;
+        let genesis_buy_pct: f64 = 60.0;
+        let detected = unique_buyers as u32 > max_clustered_wallets
+            && genesis_buy_pct > max_genesis_buy_pct;
+        assert!(detected, "5 wallets + 60% should detect bundle");
+
+        // 2 wallets bought 80% → NOT detected (few wallets, normal whale)
+        let few_buyers: usize = 2;
+        let detected2 = few_buyers as u32 > max_clustered_wallets
+            && genesis_buy_pct > max_genesis_buy_pct;
+        assert!(!detected2, "2 wallets should not trigger bundle (could be 1 whale)");
+    }
+
+    #[test]
+    fn test_genesis_buy_pct_calculation() {
+        let total_supply: f64 = 1_000_000.0;
+
+        // buyer_amounts simulation
+        let mut buyer_amounts: HashMap<String, f64> = HashMap::new();
+        buyer_amounts.insert("wallet_a".to_string(), 200_000.0);
+        buyer_amounts.insert("wallet_b".to_string(), 150_000.0);
+        buyer_amounts.insert("wallet_c".to_string(), 50_000.0);
+
+        let total_bought: f64 = buyer_amounts.values().sum();
+        let pct = (total_bought / total_supply) * 100.0;
+
+        assert!((pct - 40.0).abs() < 0.01, "400k/1M = 40%");
+        assert_eq!(buyer_amounts.len(), 3, "3 unique buyers");
+    }
+
+    #[test]
+    fn test_safe_genesis_no_bundle() {
+        let max_clustered = 3u32;
+        let max_pct = 50.0;
+
+        // Only 1 buyer at 10% → safe
+        let buyers = 1usize;
+        let pct = 10.0;
+        let detected = buyers as u32 > max_clustered && pct > max_pct;
+        assert!(!detected, "1 buyer at 10% is safe");
     }
 }

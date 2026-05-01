@@ -45,6 +45,10 @@ pub struct AntiRugFilterResult {
     pub genesis_bundle_detected: bool,
     /// True nếu token có Metaplex metadata URI.
     pub has_metadata_uri: bool,
+    /// Fix #10: Metadata URI chi tiết (nếu có).
+    pub metadata_uri: Option<String>,
+    /// Fix #10: Token name từ metadata (nếu có).
+    pub token_name: Option<String>,
     /// Tổng thời gian chạy filter (ms).
     pub filter_duration_ms: u64,
 }
@@ -59,6 +63,8 @@ impl AntiRugFilterResult {
             genesis_buy_pct: None,
             genesis_bundle_detected: false,
             has_metadata_uri: false,
+            metadata_uri: None,
+            token_name: None,
             filter_duration_ms: 0,
         }
     }

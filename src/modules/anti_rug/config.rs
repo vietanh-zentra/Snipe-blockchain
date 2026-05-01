@@ -61,7 +61,7 @@ impl Default for AntiRugConfig {
             max_clustered_wallets: 3,
             metadata_checker_enabled: true,
             panic_sell_enabled: true,
-            panic_sell_jito_tip_lamports: 100_000,
+            panic_sell_jito_tip_lamports: 1_000_000, // 0.001 SOL — đủ để validator ưu tiên
             panic_sell_watch_top_holders: 3,
             filter_timeout_ms: 1_500,
         }

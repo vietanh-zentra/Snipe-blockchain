@@ -18,6 +18,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Telegram alert worker failed to start: {e}");
     }
 
+    // Fix #2/#4: Khởi tạo global alert bot cho anti-rug notifications
+    migration_sniper_bot::modules::telegram_ui::alert_sender::init_alert_bot();
+
     tokio::spawn({
         async {
             loop {

@@ -14,7 +14,7 @@ use super::{
     dev_wallet_profiler::check_dev_wallet,
     filter_result::{AntiRugFilterResult, FilterVerdict},
     holder_analyzer::check_holder_concentration,
-    metadata_checker::check_has_metadata,
+    metadata_checker::check_metadata,
     genesis_detector::check_genesis_bundles,
 };
 
@@ -57,12 +57,12 @@ pub async fn evaluate_token(
                 Ok(None)
             }
         },
-        // Module 5: Metadata Checker
+        // Module 5: Metadata Checker — Fix #10: trả về chi tiết thay vì bool
         async {
             if config.metadata_checker_enabled {
-                check_has_metadata(mint, config.filter_timeout_ms).await
+                check_metadata(mint, config.filter_timeout_ms).await.ok().flatten()
             } else {
-                false
+                None
             }
         },
     );
@@ -104,7 +104,7 @@ fn build_verdict(
     holder_result: Result<Option<f64>, String>,
     dev_result: Result<Option<u64>, String>,
     genesis_result: Result<Option<f64>, String>,
-    has_metadata: bool,
+    meta_result: Option<super::metadata_checker::MetadataCheckResult>,
     duration_ms: u64,
 ) -> AntiRugFilterResult {
     let mut fail_reasons: Vec<String> = Vec::new();
@@ -137,7 +137,15 @@ fn build_verdict(
         Ok(pct) => pct,
     };
 
-    // Module 5: Metadata Checker — chỉ warn, không fail
+    // Module 5: Metadata Checker — Fix #10: extract detail, chỉ warn không fail
+    let (has_metadata, metadata_uri, token_name) = match &meta_result {
+        Some(m) => (
+            m.has_uri,
+            m.uri.clone(),
+            m.name.clone(),
+        ),
+        None => (false, None, None),
+    };
     if !has_metadata {
         warn_reasons.push("[M5-Metadata] Token has no metadata URI".to_string());
     }
@@ -160,6 +168,8 @@ fn build_verdict(
         genesis_buy_pct,
         genesis_bundle_detected: genesis_buy_pct.map(|p| p > 30.0).unwrap_or(false),
         has_metadata_uri: has_metadata,
+        metadata_uri,
+        token_name,
         filter_duration_ms: duration_ms,
     }
 }
