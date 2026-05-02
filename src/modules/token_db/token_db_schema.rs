@@ -18,6 +18,8 @@ pub struct TokenDatabaseSchema {
     pub tracked_ts_state: TSMode,
     pub pumpswap_ix_accounts: PumpSwapStruct,
     pub token_sell_status: TokenSellStatus,
+    /// Slot tại thời điểm token được tạo (dùng cho Module 4 Genesis Detector).
+    pub creation_slot: Option<u64>,
 }
 
 impl TokenDatabaseSchema {
@@ -50,6 +52,7 @@ impl TokenDatabaseSchema {
                 &create_pool_event_data,
             ),
             token_sell_status: TokenSellStatus::None,
+            creation_slot: None, // Sẽ được populate nếu có thông tin từ migration event
         };
 
 

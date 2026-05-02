@@ -51,6 +51,8 @@ pub struct AntiRugFilterResult {
     pub token_name: Option<String>,
     /// Tổng thời gian chạy filter (ms).
     pub filter_duration_ms: u64,
+    /// Tổng hợp risk score (0–100). 0 = an toàn, 100 = cực kỳ nguy hiểm (Brief L358).
+    pub risk_score: u32,
 }
 
 impl AntiRugFilterResult {
@@ -66,6 +68,7 @@ impl AntiRugFilterResult {
             metadata_uri: None,
             token_name: None,
             filter_duration_ms: 0,
+            risk_score: 0,
         }
     }
 }

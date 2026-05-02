@@ -10,7 +10,7 @@ use std::time::Instant;
 use tokio::join;
 
 use super::{
-    config::AntiRugConfig,
+    config::{AntiRugConfig, MetadataAction},
     dev_wallet_profiler::check_dev_wallet,
     filter_result::{AntiRugFilterResult, FilterVerdict},
     holder_analyzer::check_holder_concentration,
@@ -52,7 +52,7 @@ pub async fn evaluate_token(
         // Module 3: Dev Wallet Profiler
         async {
             if config.dev_profiler_enabled {
-                check_dev_wallet(dev, config.min_dev_tx_count, config.filter_timeout_ms).await
+                check_dev_wallet(dev, config.min_dev_tx_count, config.min_wallet_age_hours, config.block_cex_funded, config.filter_timeout_ms).await
             } else {
                 Ok(None)
             }
@@ -96,6 +96,8 @@ pub async fn evaluate_token(
         dev_result,
         genesis_result,
         meta_result,
+        &config.metadata_empty_action,
+        config.require_metadata_uri,
         elapsed_ms,
     )
 }
@@ -105,6 +107,8 @@ fn build_verdict(
     dev_result: Result<Option<u64>, String>,
     genesis_result: Result<Option<f64>, String>,
     meta_result: Option<super::metadata_checker::MetadataCheckResult>,
+    metadata_action: &MetadataAction,
+    require_metadata_uri: bool,
     duration_ms: u64,
 ) -> AntiRugFilterResult {
     let mut fail_reasons: Vec<String> = Vec::new();
@@ -137,7 +141,7 @@ fn build_verdict(
         Ok(pct) => pct,
     };
 
-    // Module 5: Metadata Checker — Fix #10: extract detail, chỉ warn không fail
+    // Module 5: Metadata Checker — Brief V.M5 L405: metadata_empty_action
     let (has_metadata, metadata_uri, token_name) = match &meta_result {
         Some(m) => (
             m.has_uri,
@@ -147,8 +151,38 @@ fn build_verdict(
         None => (false, None, None),
     };
     if !has_metadata {
-        warn_reasons.push("[M5-Metadata] Token has no metadata URI".to_string());
+        // Brief L404: require_metadata_uri = false → skip metadata action entirely
+        let effective_action = if !require_metadata_uri {
+            &MetadataAction::Allow
+        } else {
+            metadata_action
+        };
+        match effective_action {
+            MetadataAction::Skip => {
+                fail_reasons.push("[M5-Metadata] Token has no metadata URI (action: skip)".to_string());
+            }
+            MetadataAction::Warn => {
+                warn_reasons.push("[M5-Metadata] Token has no metadata URI".to_string());
+            }
+            MetadataAction::Allow => {} // Do nothing
+        }
     }
+    // Brief L358: Tổng hợp risk score (0–100)
+    let mut risk_score: u32 = 0;
+    // Fail reasons = 25 points each (max 75)
+    risk_score += (fail_reasons.len() as u32).min(3) * 25;
+    // Warn reasons = 10 points each (max 20)
+    risk_score += (warn_reasons.len() as u32).min(2) * 10;
+    // Holder concentration: 0-30% = 0pts, 30-50% = +10, 50%+ = +20
+    if let Some(pct) = top10_pct {
+        if pct > 50.0 { risk_score += 20; }
+        else if pct > 30.0 { risk_score += 10; }
+    }
+    // No metadata = +5
+    if !has_metadata { risk_score += 5; }
+    // Genesis bundle = +15
+    if genesis_buy_pct.map(|p| p > 30.0).unwrap_or(false) { risk_score += 15; }
+    risk_score = risk_score.min(100);
 
     // Build final verdict
     let verdict = if !fail_reasons.is_empty() {
@@ -171,6 +205,7 @@ fn build_verdict(
         metadata_uri,
         token_name,
         filter_duration_ms: duration_ms,
+        risk_score,
     }
 }
 

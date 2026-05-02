@@ -87,10 +87,12 @@ pub async fn analyze_dev_wallet(
 ///
 /// Gọi bởi `pre_buy_filter.rs`. Trả về:
 /// - `Ok(Some(tx_count))` — số TX tìm được
-/// - `Err(reason)` — nếu ví dev fail tiêu chí (< min_tx_count)
+/// - `Err(reason)` — nếu ví dev fail tiêu chí (< min_tx_count hoặc < min_wallet_age_hours)
 pub async fn check_dev_wallet(
     dev_pubkey: &Pubkey,
     min_tx_count: u64,
+    min_wallet_age_hours: u64,
+    block_cex_funded: bool,
     timeout_ms: u64,
 ) -> Result<Option<u64>, String> {
     let profile = analyze_dev_wallet(dev_pubkey, timeout_ms)
@@ -101,18 +103,124 @@ pub async fn check_dev_wallet(
         None => Ok(None), // Không lấy được data → skip filter, không block
 
         Some(p) => {
+            // Brief L355: Tuổi ví < 24h → cảnh báo / fail
+            if let Some(age_hours) = p.estimated_age_hours {
+                if min_wallet_age_hours > 0 && age_hours < min_wallet_age_hours {
+                    return Err(format!(
+                        "Dev wallet too young: {} hours (min: {}h). TXs: {}",
+                        age_hours, min_wallet_age_hours, p.tx_count
+                    ));
+                }
+            }
+
+            // Brief L356: Ví < 10 TX → cảnh báo / fail
             if p.tx_count < min_tx_count {
-                Err(format!(
+                return Err(format!(
                     "Dev wallet has only {} TXs (min: {}). Age: {} hours",
                     p.tx_count,
                     min_tx_count,
                     p.estimated_age_hours.unwrap_or(0)
-                ))
-            } else {
-                Ok(Some(p.tx_count))
+                ));
+            }
+
+            // Brief L357: Nguồn funding từ CEX hot wallet → cảnh báo
+            if block_cex_funded {
+                if let Ok(is_cex) = check_cex_funding(dev_pubkey, timeout_ms).await {
+                    if is_cex {
+                        return Err(format!(
+                            "Dev wallet funded from CEX hot wallet. TXs: {}, Age: {}h",
+                            p.tx_count, p.estimated_age_hours.unwrap_or(0)
+                        ));
+                    }
+                }
+            }
+
+            Ok(Some(p.tx_count))
+        }
+    }
+}
+
+/// Danh sách CEX hot wallets phổ biến trên Solana.
+/// Đây là các địa chỉ withdrawal thường gặp của các sàn lớn.
+const CEX_HOT_WALLETS: &[&str] = &[
+    // Binance
+    "2ojv9BAiHUrvsm9gxDe7fJSzbNZSJcxZvf8dqmWGHG8S",
+    "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9",
+    // Coinbase
+    "H8sMJSCQxfKiFTCfDR3DUMLPwcRbM61LGFJ8N4dK3WjS",
+    "2AQdpHJ2JpcEgPiATUXjQxA8QmafFegfQwSLWSprPicm",
+    // OKX
+    "5VCwKtCXgCJ6kit5FybXjvFnyqmRwPGQkiLNi9yByMhN",
+    // Bybit
+    "AC5RDfQFmDS1deWZos921JfqscXdByf6BKHAbETaT4gU",
+    // KuCoin
+    "BmFdpraQhkiDQE6SNbjkMwb5MP8AaetcMxxxHLZmijKZ",
+    // Gate.io
+    "u6PJ8DtQuPFnfmwHbGFULQ4u4EgjDiyYKjVEsynXq2w",
+];
+
+/// Kiểm tra xem ví dev có được funding từ CEX hot wallet hay không.
+/// Lấy TX cũ nhất (funding đầu tiên) và check sender.
+async fn check_cex_funding(
+    dev_pubkey: &Pubkey,
+    timeout_ms: u64,
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    let config = GetConfirmedSignaturesForAddress2Config {
+        limit: Some(5), // Lấy 5 TX cũ nhất
+        commitment: Some(CommitmentConfig::confirmed()),
+        ..Default::default()
+    };
+
+    let result = tokio::time::timeout(
+        Duration::from_millis(timeout_ms),
+        RPC_CLIENT.get_signatures_for_address_with_config(dev_pubkey, config),
+    )
+    .await;
+
+    let sigs = match result {
+        Ok(Ok(s)) => s,
+        _ => return Ok(false), // Timeout hoặc lỗi → không block
+    };
+
+    // Kiểm tra từng TX cũ nhất xem có liên quan tới CEX không
+    for sig_info in sigs.iter().rev().take(3) {
+        // Check memo field (một số CEX gắn memo vào withdrawal TX)
+        if let Some(memo) = &sig_info.memo {
+            let memo_lower = memo.to_lowercase();
+            if memo_lower.contains("binance") || memo_lower.contains("okx")
+                || memo_lower.contains("coinbase") || memo_lower.contains("bybit")
+                || memo_lower.contains("kucoin") || memo_lower.contains("gate") {
+                return Ok(true);
             }
         }
     }
+
+    // Heuristic: Fetch TX details của TX cũ nhất, check xem sender có phải CEX không
+    if let Some(oldest_sig) = sigs.last() {
+        if let Ok(sig) = oldest_sig.signature.parse::<solana_sdk::signature::Signature>() {
+            let tx_config = solana_client::rpc_config::RpcTransactionConfig {
+                encoding: Some(solana_transaction_status_client_types::UiTransactionEncoding::JsonParsed),
+                commitment: Some(CommitmentConfig::confirmed()),
+                max_supported_transaction_version: Some(0),
+            };
+            if let Ok(tx) = tokio::time::timeout(
+                Duration::from_millis(timeout_ms),
+                RPC_CLIENT.get_transaction(&sig, tx_config),
+            ).await {
+                if let Ok(confirmed_tx) = tx {
+                    // Check account keys trong TX
+                    let tx_str = format!("{:?}", confirmed_tx);
+                    for cex_wallet in CEX_HOT_WALLETS {
+                        if tx_str.contains(cex_wallet) {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(false)
 }
 
 #[cfg(test)]

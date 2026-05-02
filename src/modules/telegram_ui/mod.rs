@@ -31,6 +31,7 @@ type BotValueResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 const MENU_WALLET: &str = "💰 Wallet management";
 const MENU_PARAMS: &str = "⚙️ Trading parameters";
+const MENU_ANTIRUG: &str = "🛡️ Anti-Rug";
 const MENU_START: &str = "▶️ Start";
 const MENU_STOP: &str = "⏹ Stop";
 
@@ -211,6 +212,10 @@ async fn handle_message(
     }
     if text == MENU_PARAMS {
         open_trading_parameters(&bot, chat_id, &state, None).await?;
+        return Ok(());
+    }
+    if text == MENU_ANTIRUG {
+        send_anti_rug_menu(&bot, chat_id, &state).await?;
         return Ok(());
     }
     if text == MENU_START || text == MENU_STOP {
@@ -504,6 +509,66 @@ async fn handle_callback(
         "go_main" => {
             show_main_menu(&bot, chat_id, &state, q.message.as_ref()).await?;
         }
+        // ── Anti-Rug toggle callbacks (Brief L555, L562, L669) ────────────
+        "ar_master_toggle" => {
+            let mut run = BOT_RUN_STATE.write().await;
+            run.anti_rug.enabled = !run.anti_rug.enabled;
+            let status = if run.anti_rug.enabled { "ON" } else { "OFF" };
+            drop(run);
+            bot.send_message(chat_id, format!("🛡️ Anti-Rug: {status}")).await?;
+            send_anti_rug_menu(&bot, chat_id, &state).await?;
+        }
+        "ar_warn_toggle" => {
+            let mut run = BOT_RUN_STATE.write().await;
+            run.anti_rug.warn_only = !run.anti_rug.warn_only;
+            let mode = if run.anti_rug.warn_only { "WARN ONLY" } else { "BLOCK" };
+            drop(run);
+            bot.send_message(chat_id, format!("Mode: {mode}")).await?;
+            send_anti_rug_menu(&bot, chat_id, &state).await?;
+        }
+        "ar_holder_toggle" => {
+            let mut run = BOT_RUN_STATE.write().await;
+            run.anti_rug.holder_filter_enabled = !run.anti_rug.holder_filter_enabled;
+            let s = if run.anti_rug.holder_filter_enabled { "ON" } else { "OFF" };
+            drop(run);
+            bot.send_message(chat_id, format!("M1 Holder Filter: {s}")).await?;
+            send_anti_rug_menu(&bot, chat_id, &state).await?;
+        }
+        "ar_dev_toggle" => {
+            let mut run = BOT_RUN_STATE.write().await;
+            run.anti_rug.dev_profiler_enabled = !run.anti_rug.dev_profiler_enabled;
+            let s = if run.anti_rug.dev_profiler_enabled { "ON" } else { "OFF" };
+            drop(run);
+            bot.send_message(chat_id, format!("M3 Dev Profiler: {s}")).await?;
+            send_anti_rug_menu(&bot, chat_id, &state).await?;
+        }
+        "ar_genesis_toggle" => {
+            let mut run = BOT_RUN_STATE.write().await;
+            run.anti_rug.genesis_detector_enabled = !run.anti_rug.genesis_detector_enabled;
+            let s = if run.anti_rug.genesis_detector_enabled { "ON" } else { "OFF" };
+            drop(run);
+            bot.send_message(chat_id, format!("M4 Genesis Detector: {s}")).await?;
+            send_anti_rug_menu(&bot, chat_id, &state).await?;
+        }
+        "ar_meta_toggle" => {
+            let mut run = BOT_RUN_STATE.write().await;
+            run.anti_rug.metadata_checker_enabled = !run.anti_rug.metadata_checker_enabled;
+            let s = if run.anti_rug.metadata_checker_enabled { "ON" } else { "OFF" };
+            drop(run);
+            bot.send_message(chat_id, format!("M5 Metadata Checker: {s}")).await?;
+            send_anti_rug_menu(&bot, chat_id, &state).await?;
+        }
+        "ar_panic_toggle" => {
+            let mut run = BOT_RUN_STATE.write().await;
+            run.anti_rug.panic_sell_enabled = !run.anti_rug.panic_sell_enabled;
+            let s = if run.anti_rug.panic_sell_enabled { "ON" } else { "OFF" };
+            drop(run);
+            bot.send_message(chat_id, format!("M2 Panic-Sell: {s}")).await?;
+            send_anti_rug_menu(&bot, chat_id, &state).await?;
+        }
+        "ar_holder30" => { BOT_RUN_STATE.write().await.anti_rug.max_top10_holder_pct = 30.0; bot.send_message(chat_id, "Max holder: 30%").await?; }
+        "ar_holder40" => { BOT_RUN_STATE.write().await.anti_rug.max_top10_holder_pct = 40.0; bot.send_message(chat_id, "Max holder: 40%").await?; }
+        "ar_holder50" => { BOT_RUN_STATE.write().await.anti_rug.max_top10_holder_pct = 50.0; bot.send_message(chat_id, "Max holder: 50%").await?; }
         _ => {}
     }
 
@@ -542,11 +607,8 @@ const MAIN_MENU_TITLE: &str = " 🖐 Welcome to the Migration Sniper 🤖 Bot!!!
 fn main_menu_reply_keyboard(is_running: bool) -> ReplyMarkup {
     let start_stop = if is_running { MENU_STOP } else { MENU_START };
     let kb = KeyboardMarkup::new(vec![
-        vec![
-            KeyboardButton::new(MENU_WALLET),
-            KeyboardButton::new(MENU_PARAMS),
-        ],
-        vec![KeyboardButton::new(start_stop)],
+        vec![KeyboardButton::new(MENU_WALLET), KeyboardButton::new(MENU_PARAMS)],
+        vec![KeyboardButton::new(MENU_ANTIRUG), KeyboardButton::new(start_stop)],
     ])
     .resize_keyboard(true);
     ReplyMarkup::Keyboard(kb)
@@ -1543,4 +1605,67 @@ async fn sync_bot_run_state_from_ui(state: &Arc<RwLock<TelegramUiState>>) {
     run.trading.trailing_stop = snapshot.trading.trailing_stop;
     run.trading.priority_fee_micro_lamports = snapshot.trading.priority_fee_micro_lamports;
     run.trading.tip_fee_sol = snapshot.trading.tip_fee_sol;
+}
+
+/// Hiển thị menu Anti-Rug với trạng thái hiện tại và nút toggle.
+async fn send_anti_rug_menu(
+    bot: &Bot,
+    chat_id: ChatId,
+    _state: &Arc<RwLock<TelegramUiState>>,
+) -> BotResult {
+    let run = BOT_RUN_STATE.read().await;
+    let cfg = &run.anti_rug;
+
+    let on_off = |b: bool| if b { "✅ ON" } else { "❌ OFF" };
+
+    let text = format!(
+        "🛡️ Anti-Rug Intelligence Layer\n\n\
+         Master: {}\n\
+         Mode: {}\n\n\
+         M1 Holder Filter: {} (max {}%)\n\
+         M2 Panic-Sell: {}\n\
+         M3 Dev Profiler: {} (min {}TX, {}h)\n\
+         M4 Genesis Detector: {}\n\
+         M5 Metadata Checker: {} ({})\n\n\
+         Timeout: {}ms | Jito tip: {} SOL",
+        on_off(cfg.enabled),
+        if cfg.warn_only { "⚠️ WARN ONLY" } else { "🚫 BLOCK" },
+        on_off(cfg.holder_filter_enabled), cfg.max_top10_holder_pct,
+        on_off(cfg.panic_sell_enabled),
+        on_off(cfg.dev_profiler_enabled), cfg.min_dev_tx_count, cfg.min_wallet_age_hours,
+        on_off(cfg.genesis_detector_enabled),
+        on_off(cfg.metadata_checker_enabled), cfg.metadata_empty_action.as_str(),
+        cfg.filter_timeout_ms,
+        cfg.panic_sell_jito_tip_lamports as f64 / 1_000_000_000.0,
+    );
+    drop(run);
+
+    let kb = InlineKeyboardMarkup::new(vec![
+        vec![
+            InlineKeyboardButton::callback("🔌 Master ON/OFF", "ar_master_toggle"),
+            InlineKeyboardButton::callback("⚠️ Warn/Block", "ar_warn_toggle"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("📊 M1 Holder", "ar_holder_toggle"),
+            InlineKeyboardButton::callback("🚨 M2 Panic", "ar_panic_toggle"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("👤 M3 Dev", "ar_dev_toggle"),
+            InlineKeyboardButton::callback("🔍 M4 Genesis", "ar_genesis_toggle"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("📝 M5 Metadata", "ar_meta_toggle"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("30%", "ar_holder30"),
+            InlineKeyboardButton::callback("40%", "ar_holder40"),
+            InlineKeyboardButton::callback("50%", "ar_holder50"),
+        ],
+    ]);
+
+    bot.send_message(chat_id, text)
+        .reply_markup(kb)
+        .await?;
+
+    Ok(())
 }

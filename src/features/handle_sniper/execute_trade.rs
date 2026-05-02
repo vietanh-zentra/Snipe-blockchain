@@ -90,8 +90,9 @@ pub async fn execute_trade(trade_data: &DashMap<Pubkey, TokenDatabaseSchema>) {
             let verdict_str = filter_result.verdict.as_db_str();
             let reject_reason = filter_result.verdict.reason().map(|s| s.to_string());
             info!(
-                "[ANTI-RUG] Mint: {} | Verdict: {} | Top10: {:?}% | Dev TX: {:?} | Genesis: {:?}% | Meta: {} | Duration: {}ms",
+                "[ANTI-RUG] Mint: {} | Verdict: {} | Risk: {}/100 | Top10: {:?}% | Dev TX: {:?} | Genesis: {:?}% | Meta: {} | Duration: {}ms",
                 mint_str, verdict_str,
+                filter_result.risk_score,
                 filter_result.top10_holder_pct,
                 filter_result.dev_tx_count,
                 filter_result.genesis_buy_pct,
@@ -167,8 +168,42 @@ pub async fn execute_trade(trade_data: &DashMap<Pubkey, TokenDatabaseSchema>) {
 
         // ── Module 2: Panic-Sell Monitor (post-buy) ──────────────────
         let anti_rug_cfg = run_state.anti_rug.clone();
-        if anti_rug_cfg.panic_sell_enabled {
+        if anti_rug_cfg.enabled && anti_rug_cfg.panic_sell_enabled {
             use crate::modules::anti_rug::panic_sell::{PanicSellContext, start_panic_sell_monitor};
+
+            // Brief L303, L310: Xác định Dev + Top 3 holders lớn nhất
+            let mut watched = vec![token_data.token_creator]; // Dev wallet
+            let top_n = anti_rug_cfg.panic_sell_watch_top_holders as usize;
+            if top_n > 0 {
+                if let Ok(largest) = RPC_CLIENT
+                    .get_token_largest_accounts(&token_data.token_mint)
+                    .await
+                {
+                    for acc in largest.iter().take(top_n) {
+                        // acc.address là String (base58 token account address)
+                        // Parse → Pubkey, sau đó lấy owner từ account data
+                        if let Ok(token_acc_pubkey) = acc.address.parse::<Pubkey>() {
+                            if let Ok(account) = RPC_CLIENT.get_account(&token_acc_pubkey).await {
+                                // SPL Token Account layout: owner at bytes 32..64
+                                if account.data.len() >= 64 {
+                                    let owner = Pubkey::try_from(&account.data[32..64])
+                                        .unwrap_or_default();
+                                    if owner != token_data.token_creator
+                                        && owner != signer_pubkey
+                                        && owner != Pubkey::default()
+                                    {
+                                        watched.push(owner);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            info!(
+                "[PANIC_SELL] 🔍 Watching {} wallets for mint {}",
+                watched.len(), token_data.token_mint
+            );
 
             let ctx = PanicSellContext {
                 token_mint: token_data.token_mint,
@@ -178,7 +213,7 @@ pub async fn execute_trade(trade_data: &DashMap<Pubkey, TokenDatabaseSchema>) {
                 token_creator: token_data.token_creator,
                 is_cashback_coin: token_data.is_cashback_coin,
                 jito_tip_lamports: anti_rug_cfg.panic_sell_jito_tip_lamports,
-                watched_wallets: vec![token_data.token_creator],
+                watched_wallets: watched,
             };
 
             let handle = start_panic_sell_monitor(ctx);
