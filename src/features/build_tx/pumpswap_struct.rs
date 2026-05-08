@@ -187,14 +187,15 @@ impl PumpSwapStruct {
         //build instruction data
         let mut data = Vec::new();
 
-        let base_out: f64 = (sol_amount / token_price) * 10f64.powi(6);
-        let truncated_base_out: u64 = base_out.trunc() as u64;
-        let max_quote_in: f64 = sol_amount * 10f64.powi(9) * (100.0 + slippage) / 100.0;
-        let turncated_max_quote_in: u64 = max_quote_in.trunc() as u64;
+        // Official PumpSwap: buy(baseOut, maxQuoteIn)
+        // Apply slippage to BOTH: reduce base_out, increase max_quote_in
+        let expected_tokens: f64 = (sol_amount / token_price) * 10f64.powi(6);
+        let base_out: u64 = (expected_tokens * (100.0 - slippage) / 100.0).max(1.0) as u64;
+        let max_quote_in: u64 = (sol_amount * 10f64.powi(9) * (100.0 + slippage) / 100.0) as u64;
 
         data.extend_from_slice(&BUY_DISCRIMINATOR);
-        data.extend_from_slice(&truncated_base_out.to_le_bytes());
-        data.extend_from_slice(&turncated_max_quote_in.to_le_bytes());
+        data.extend_from_slice(&base_out.to_le_bytes());
+        data.extend_from_slice(&max_quote_in.to_le_bytes());
 
         // Buyback fee recipient ATA
         let buyback_fee_recipient_token_account = get_associated_token_address_with_program_id(
@@ -228,10 +229,10 @@ impl PumpSwapStruct {
                 AccountMeta::new(user_volume_accumulator, false), // #21 - User Volume Accumulator
                 AccountMeta::new_readonly(self.fee_config, false), // #22 - Fee Config
                 AccountMeta::new_readonly(self.fee_program, false), // #23 - Fee Program
-                // remaining_accounts: buyback + pool_v2_pda
-                AccountMeta::new_readonly(PUMPSWAP_BUYBACK_FEE_RECIPIENT, false), // #24 - Buyback Fee Recipient
-                AccountMeta::new(buyback_fee_recipient_token_account, false), // #25 - Buyback Fee Recipient Token Account
-                AccountMeta::new_readonly(self.pool_v2_pda, false), // #26 - Pool V2 PDA
+                // remaining_accounts: pool_v2_pda FIRST, then buyback (per official docs)
+                AccountMeta::new_readonly(self.pool_v2_pda, false), // #24 - Pool V2 PDA
+                AccountMeta::new_readonly(PUMPSWAP_BUYBACK_FEE_RECIPIENT, false), // #25 - Buyback Fee Recipient
+                AccountMeta::new(buyback_fee_recipient_token_account, false), // #26 - Buyback Fee Recipient Token Account
             ]
         } else {
             let user_volume_accumulator_wsol_ata = get_associated_token_address_with_program_id(
@@ -264,10 +265,10 @@ impl PumpSwapStruct {
                 AccountMeta::new_readonly(self.fee_config, false), // #22 - Fee Config
                 AccountMeta::new_readonly(self.fee_program, false), // #23 - Fee Program
                 AccountMeta::new(user_volume_accumulator_wsol_ata, false), // #24 - User volume accumulator wsol ata
-                // remaining_accounts: buyback + pool_v2_pda
-                AccountMeta::new_readonly(PUMPSWAP_BUYBACK_FEE_RECIPIENT, false), // #25 - Buyback Fee Recipient
-                AccountMeta::new(buyback_fee_recipient_token_account, false), // #26 - Buyback Fee Recipient Token Account
-                AccountMeta::new_readonly(self.pool_v2_pda, false),        // #27 - Pool V2 PDA
+                // remaining_accounts: pool_v2_pda FIRST, then buyback (per official docs)
+                AccountMeta::new_readonly(self.pool_v2_pda, false),        // #25 - Pool V2 PDA
+                AccountMeta::new_readonly(PUMPSWAP_BUYBACK_FEE_RECIPIENT, false), // #26 - Buyback Fee Recipient
+                AccountMeta::new(buyback_fee_recipient_token_account, false), // #27 - Buyback Fee Recipient Token Account
             ]
         };
 
@@ -348,10 +349,10 @@ impl PumpSwapStruct {
                 AccountMeta::new_readonly(coin_creator_vault_authority, false), // #19 - Coin Creator Vault Authority
                 AccountMeta::new_readonly(self.fee_config, false),              // #20 - Fee Config
                 AccountMeta::new_readonly(self.fee_program, false),             // #21 - Fee Program
-                // remaining_accounts: buyback + pool_v2_pda
-                AccountMeta::new_readonly(PUMPSWAP_BUYBACK_FEE_RECIPIENT, false), // #22 - Buyback Fee Recipient
-                AccountMeta::new(buyback_fee_recipient_token_account, false), // #23 - Buyback Fee Recipient Token Account
-                AccountMeta::new_readonly(self.pool_v2_pda, false),             // #24 - Pool V2 PDA
+                // remaining_accounts: pool_v2_pda FIRST, then buyback (per official docs)
+                AccountMeta::new_readonly(self.pool_v2_pda, false),             // #22 - Pool V2 PDA
+                AccountMeta::new_readonly(PUMPSWAP_BUYBACK_FEE_RECIPIENT, false), // #23 - Buyback Fee Recipient
+                AccountMeta::new(buyback_fee_recipient_token_account, false), // #24 - Buyback Fee Recipient Token Account
             ]
         } else {
             let user_volume_accumulator = get_pumpswap_user_volume_accumulator(*signer_pubkey);
@@ -384,10 +385,10 @@ impl PumpSwapStruct {
                 AccountMeta::new_readonly(self.fee_program, false),             // #21 - Fee Program
                 AccountMeta::new(user_volume_accumulator_wsol_ata, false), // #22 - User volume accumulator wsol ata
                 AccountMeta::new(user_volume_accumulator, false), // #23 - User volume accumulator
-                // remaining_accounts: buyback + pool_v2_pda
-                AccountMeta::new_readonly(PUMPSWAP_BUYBACK_FEE_RECIPIENT, false), // #24 - Buyback Fee Recipient
-                AccountMeta::new(buyback_fee_recipient_token_account, false), // #25 - Buyback Fee Recipient Token Account
-                AccountMeta::new_readonly(self.pool_v2_pda, false), // #26 - Pool V2 PDA
+                // remaining_accounts: pool_v2_pda FIRST, then buyback (per official docs)
+                AccountMeta::new_readonly(self.pool_v2_pda, false), // #24 - Pool V2 PDA
+                AccountMeta::new_readonly(PUMPSWAP_BUYBACK_FEE_RECIPIENT, false), // #25 - Buyback Fee Recipient
+                AccountMeta::new(buyback_fee_recipient_token_account, false), // #26 - Buyback Fee Recipient Token Account
             ]
         };
 

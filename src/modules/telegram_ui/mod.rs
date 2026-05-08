@@ -573,6 +573,48 @@ async fn handle_callback(
         "ar_devage_6" => { BOT_RUN_STATE.write().await.anti_rug.min_wallet_age_hours = 6; bot.send_message(chat_id, "✅ M3 Dev Age: 6h").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
         "ar_devage_12" => { BOT_RUN_STATE.write().await.anti_rug.min_wallet_age_hours = 12; bot.send_message(chat_id, "✅ M3 Dev Age: 12h").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
         "ar_devage_24" => { BOT_RUN_STATE.write().await.anti_rug.min_wallet_age_hours = 24; bot.send_message(chat_id, "✅ M3 Dev Age: 24h").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
+        "ar_view_skipped" => {
+            match crate::modules::postgresql::db::query_recent_skipped_tokens(10).await {
+                Ok(rows) if rows.is_empty() => {
+                    bot.send_message(chat_id, "📋 No skipped tokens yet.").await?;
+                }
+                Ok(rows) => {
+                    let mut text = String::from("📋 <b>Skipped Tokens Log</b>\n\n");
+                    text.push_str("<pre>");
+                    text.push_str(&format!("{:<3} {:<14} {:<30} {}\n", "#", "Token", "Reason", "Time"));
+                    text.push_str(&format!("{}\n", "─".repeat(70)));
+                    for (i, (mint, reason, time)) in rows.iter().enumerate() {
+                        let short_mint = if mint.len() > 12 {
+                            format!("{}..{}", &mint[..6], &mint[mint.len()-4..])
+                        } else {
+                            mint.clone()
+                        };
+                        let short_reason = if reason.len() > 28 {
+                            format!("{}..", &reason[..26])
+                        } else {
+                            reason.clone()
+                        };
+                        let short_time = if time.len() > 16 {
+                            time[5..16].to_string()
+                        } else {
+                            time.clone()
+                        };
+                        text.push_str(&format!("{:<3} {:<14} {:<30} {}\n", i + 1, short_mint, short_reason, short_time));
+                    }
+                    text.push_str("</pre>\n\n");
+                    text.push_str("💡 <i>Full mint address — tap row number below:</i>\n");
+                    for (i, (mint, _reason, _time)) in rows.iter().enumerate() {
+                        text.push_str(&format!("{}. <code>{}</code>\n", i + 1, mint));
+                    }
+                    bot.send_message(chat_id, text)
+                        .parse_mode(teloxide::types::ParseMode::Html)
+                        .await?;
+                }
+                Err(e) => {
+                    bot.send_message(chat_id, format!("❌ DB error: {e}")).await?;
+                }
+            }
+        }
         _ => {}
     }
 
@@ -1671,6 +1713,10 @@ async fn send_anti_rug_menu(
         vec![
             InlineKeyboardButton::callback("📝 M5 Metadata", "ar_meta_toggle"),
             InlineKeyboardButton::callback("← Back", "show_main"),
+        ],
+        // Row: View skipped tokens history
+        vec![
+            InlineKeyboardButton::callback("📋 View Skipped Tokens", "ar_view_skipped"),
         ],
         // Row 3: Holder % presets
         vec![

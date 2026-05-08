@@ -1,5 +1,5 @@
 use crate::encryption::{decrypt_private_key, encrypt_private_key};
-use super::entities::{anti_rug_filter_log, trading_parameter, wallet};
+use super::entities::{anti_rug_filter_log, skipped_tokens_log, trading_parameter, wallet};
 use super::migration::Migrator;
 use sea_orm::entity::prelude::*;
 use sea_orm::{ActiveValue::Set, Database, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
@@ -367,4 +367,43 @@ pub async fn log_anti_rug_filter_result(
     };
     active.insert(db).await?;
     Ok(())
+}
+
+// ── Skipped Tokens Logging ────────────────────────────────────────────────────
+
+/// Lưu token bị skip bởi Anti-Rug filter (Block mode) vào database.
+/// Fire-and-forget — gọi từ execute_trade khi token bị block.
+pub async fn log_skipped_token(
+    token_mint: &str,
+    rejection_reason: &str,
+) -> PgResult<()> {
+    let db = get_shared_db().await?;
+    let active = skipped_tokens_log::ActiveModel {
+        token_mint: Set(token_mint.to_string()),
+        rejection_reason: Set(rejection_reason.to_string()),
+        timestamp: Set(chrono::Utc::now().into()),
+        ..Default::default()
+    };
+    active.insert(db).await?;
+    Ok(())
+}
+
+/// Query N skipped tokens gần nhất (cho Telegram command /skipped).
+pub async fn query_recent_skipped_tokens(limit: u64) -> PgResult<Vec<(String, String, String)>> {
+    let db = get_shared_db().await?;
+    let rows = skipped_tokens_log::Entity::find()
+        .order_by_desc(skipped_tokens_log::Column::Timestamp)
+        .paginate(db, limit)
+        .fetch_page(0)
+        .await?;
+
+    let mut results = Vec::new();
+    for row in rows {
+        results.push((
+            row.token_mint,
+            row.rejection_reason,
+            row.timestamp.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+        ));
+    }
+    Ok(results)
 }

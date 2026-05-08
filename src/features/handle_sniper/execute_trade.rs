@@ -150,6 +150,18 @@ pub async fn execute_trade(trade_data: &DashMap<Pubkey, TokenDatabaseSchema>) {
                 crate::modules::telegram_ui::alert_sender::alert_token_filtered(
                     &mint_str, reason_str,
                 );
+                // Log skipped token to PostgreSQL for customer analysis
+                {
+                    let mint_for_db = mint_str.clone();
+                    let reason_for_db = reason_str.to_string();
+                    tokio::spawn(async move {
+                        if let Err(e) = crate::modules::postgresql::db::log_skipped_token(
+                            &mint_for_db, &reason_for_db,
+                        ).await {
+                            eprintln!("[SKIPPED_LOG] DB insert error: {e}");
+                        }
+                    });
+                }
                 // Mark in TOKEN_DB to avoid reprocessing
                 if let Some(mut db_entry) = TOKEN_DB.get(mint).ok().flatten() {
                     db_entry.sniper_trade_state = SniperTradeStatus::RugDetected;
