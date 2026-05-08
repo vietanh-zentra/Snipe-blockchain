@@ -51,3 +51,8 @@ pub const PUMPSWAP_GLOBAL_VOLUME_ACCUMULATOR: Pubkey =
 //mayhem
 pub const MAYHEM_PROTOCOL_FEE_RECIPIENT: Pubkey =
     pubkey!("GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS");
+
+//buyback fee recipients (required by PumpSwap AMM update - fixes error 6058)
+//official list from https://github.com/pump-fun/pump-public-docs/blob/main/docs/FEE_RECIPIENTS.md
+pub const PUMPSWAP_BUYBACK_FEE_RECIPIENT: Pubkey =
+    pubkey!("5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD");

@@ -196,21 +196,28 @@ impl PumpSwapStruct {
         data.extend_from_slice(&truncated_base_out.to_le_bytes());
         data.extend_from_slice(&turncated_max_quote_in.to_le_bytes());
 
+        // Buyback fee recipient ATA
+        let buyback_fee_recipient_token_account = get_associated_token_address_with_program_id(
+            &PUMPSWAP_BUYBACK_FEE_RECIPIENT,
+            &self.quote_mint,
+            &self.quote_token_program,
+        );
+
         let accounts = if !is_cashback_enabled {
             vec![
                 AccountMeta::new(self.pool, false),                    // #1 - Pool
                 AccountMeta::new(*signer_pubkey, true), // #2 - User (Signer, Writable, Fee Payer)
                 AccountMeta::new_readonly(self.global_config, false), // #3 - Global Config
-                AccountMeta::new_readonly(self.base_mint, false), // #4 - Base Mint (WSOL)
-                AccountMeta::new_readonly(self.quote_mint, false), // #5 - Quote Mint (TSFart)
+                AccountMeta::new_readonly(self.base_mint, false), // #4 - Base Mint
+                AccountMeta::new_readonly(self.quote_mint, false), // #5 - Quote Mint
                 AccountMeta::new(user_base_token_account, false), // #6 - User Base Token Account
                 AccountMeta::new(user_quote_token_account, false), // #7 - User Quote Token Account
                 AccountMeta::new(self.pool_base_token_account, false), // #8 - Pool Base Token Account
                 AccountMeta::new(self.pool_quote_token_account, false), // #9 - Pool Quote Token Account
                 AccountMeta::new_readonly(self.protocol_fee_recipient, false), // #10 - Protocol Fee Recipient
                 AccountMeta::new(self.protocol_fee_recipient_token_account, false), // #11 - Protocol Fee Recipient Token Account
-                AccountMeta::new_readonly(self.base_token_program, false), // #12 - Base Token Program (Token Program)
-                AccountMeta::new_readonly(self.quote_token_program, false), // #13 - Quote Token Program (Token Program)
+                AccountMeta::new_readonly(self.base_token_program, false), // #12 - Base Token Program
+                AccountMeta::new_readonly(self.quote_token_program, false), // #13 - Quote Token Program
                 AccountMeta::new_readonly(self.system_program, false),      // #14 - System Program
                 AccountMeta::new_readonly(self.associated_token_program, false), // #15 - Associated Token Program
                 AccountMeta::new_readonly(self.event_authority, false), // #16 - Event Authority
@@ -220,8 +227,11 @@ impl PumpSwapStruct {
                 AccountMeta::new(PUMPSWAP_GLOBAL_VOLUME_ACCUMULATOR, false), // #20 - Global Volume Accumulator
                 AccountMeta::new(user_volume_accumulator, false), // #21 - User Volume Accumulator
                 AccountMeta::new_readonly(self.fee_config, false), // #22 - Fee Config
-                AccountMeta::new_readonly(self.fee_program, false), //#23 - Fee Program
-                AccountMeta::new_readonly(self.pool_v2_pda, false), //#24 - Pool V2 PDA
+                AccountMeta::new_readonly(self.fee_program, false), // #23 - Fee Program
+                // remaining_accounts: buyback + pool_v2_pda
+                AccountMeta::new_readonly(PUMPSWAP_BUYBACK_FEE_RECIPIENT, false), // #24 - Buyback Fee Recipient
+                AccountMeta::new(buyback_fee_recipient_token_account, false), // #25 - Buyback Fee Recipient Token Account
+                AccountMeta::new_readonly(self.pool_v2_pda, false), // #26 - Pool V2 PDA
             ]
         } else {
             let user_volume_accumulator_wsol_ata = get_associated_token_address_with_program_id(
@@ -233,16 +243,16 @@ impl PumpSwapStruct {
                 AccountMeta::new(self.pool, false),                    // #1 - Pool
                 AccountMeta::new(*signer_pubkey, true), // #2 - User (Signer, Writable, Fee Payer)
                 AccountMeta::new_readonly(self.global_config, false), // #3 - Global Config
-                AccountMeta::new_readonly(self.base_mint, false), // #4 - Base Mint (WSOL)
-                AccountMeta::new_readonly(self.quote_mint, false), // #5 - Quote Mint (TSFart)
+                AccountMeta::new_readonly(self.base_mint, false), // #4 - Base Mint
+                AccountMeta::new_readonly(self.quote_mint, false), // #5 - Quote Mint
                 AccountMeta::new(user_base_token_account, false), // #6 - User Base Token Account
                 AccountMeta::new(user_quote_token_account, false), // #7 - User Quote Token Account
                 AccountMeta::new(self.pool_base_token_account, false), // #8 - Pool Base Token Account
                 AccountMeta::new(self.pool_quote_token_account, false), // #9 - Pool Quote Token Account
                 AccountMeta::new_readonly(self.protocol_fee_recipient, false), // #10 - Protocol Fee Recipient
                 AccountMeta::new(self.protocol_fee_recipient_token_account, false), // #11 - Protocol Fee Recipient Token Account
-                AccountMeta::new_readonly(self.base_token_program, false), // #12 - Base Token Program (Token Program)
-                AccountMeta::new_readonly(self.quote_token_program, false), // #13 - Quote Token Program (Token Program)
+                AccountMeta::new_readonly(self.base_token_program, false), // #12 - Base Token Program
+                AccountMeta::new_readonly(self.quote_token_program, false), // #13 - Quote Token Program
                 AccountMeta::new_readonly(self.system_program, false),      // #14 - System Program
                 AccountMeta::new_readonly(self.associated_token_program, false), // #15 - Associated Token Program
                 AccountMeta::new_readonly(self.event_authority, false), // #16 - Event Authority
@@ -252,9 +262,12 @@ impl PumpSwapStruct {
                 AccountMeta::new(PUMPSWAP_GLOBAL_VOLUME_ACCUMULATOR, false), // #20 - Global Volume Accumulator
                 AccountMeta::new(user_volume_accumulator, false), // #21 - User Volume Accumulator
                 AccountMeta::new_readonly(self.fee_config, false), // #22 - Fee Config
-                AccountMeta::new_readonly(self.fee_program, false), //#23 - Fee Program
-                AccountMeta::new(user_volume_accumulator_wsol_ata, false), //#24 - User volume accumulator wsol ata
-                AccountMeta::new_readonly(self.pool_v2_pda, false),        //#25 - Pool V2 PDA
+                AccountMeta::new_readonly(self.fee_program, false), // #23 - Fee Program
+                AccountMeta::new(user_volume_accumulator_wsol_ata, false), // #24 - User volume accumulator wsol ata
+                // remaining_accounts: buyback + pool_v2_pda
+                AccountMeta::new_readonly(PUMPSWAP_BUYBACK_FEE_RECIPIENT, false), // #25 - Buyback Fee Recipient
+                AccountMeta::new(buyback_fee_recipient_token_account, false), // #26 - Buyback Fee Recipient Token Account
+                AccountMeta::new_readonly(self.pool_v2_pda, false),        // #27 - Pool V2 PDA
             ]
         };
 
@@ -305,21 +318,28 @@ impl PumpSwapStruct {
         data.extend_from_slice(&sell_amount.to_le_bytes());
         data.extend_from_slice(&min_sol_out.to_le_bytes());
 
+        // Buyback fee recipient ATA
+        let buyback_fee_recipient_token_account = get_associated_token_address_with_program_id(
+            &PUMPSWAP_BUYBACK_FEE_RECIPIENT,
+            &self.quote_mint,
+            &self.quote_token_program,
+        );
+
         let accounts = if !is_cashback_enabled {
             vec![
                 AccountMeta::new(self.pool, false),                    // #1 - Pool
                 AccountMeta::new(*signer_pubkey, true), // #2 - User (Signer, Writable, Fee Payer)
                 AccountMeta::new_readonly(self.global_config, false), // #3 - Global Config
-                AccountMeta::new_readonly(self.base_mint, false), // #4 - Base Mint (WSOL)
-                AccountMeta::new_readonly(self.quote_mint, false), // #5 - Quote Mint (TSFart)
+                AccountMeta::new_readonly(self.base_mint, false), // #4 - Base Mint
+                AccountMeta::new_readonly(self.quote_mint, false), // #5 - Quote Mint
                 AccountMeta::new(user_base_token_account, false), // #6 - User Base Token Account
                 AccountMeta::new(user_quote_token_account, false), // #7 - User Quote Token Account
                 AccountMeta::new(self.pool_base_token_account, false), // #8 - Pool Base Token Account
                 AccountMeta::new(self.pool_quote_token_account, false), // #9 - Pool Quote Token Account
                 AccountMeta::new_readonly(self.protocol_fee_recipient, false), // #10 - Protocol Fee Recipient
                 AccountMeta::new(self.protocol_fee_recipient_token_account, false), // #11 - Protocol Fee Recipient Token Account
-                AccountMeta::new_readonly(self.base_token_program, false), // #12 - Base Token Program (Token Program)
-                AccountMeta::new_readonly(self.quote_token_program, false), // #13 - Quote Token Program (Token Program)
+                AccountMeta::new_readonly(self.base_token_program, false), // #12 - Base Token Program
+                AccountMeta::new_readonly(self.quote_token_program, false), // #13 - Quote Token Program
                 AccountMeta::new_readonly(self.system_program, false),      // #14 - System Program
                 AccountMeta::new_readonly(self.associated_token_program, false), // #15 - Associated Token Program
                 AccountMeta::new_readonly(self.event_authority, false), // #16 - Event Authority
@@ -328,7 +348,10 @@ impl PumpSwapStruct {
                 AccountMeta::new_readonly(coin_creator_vault_authority, false), // #19 - Coin Creator Vault Authority
                 AccountMeta::new_readonly(self.fee_config, false),              // #20 - Fee Config
                 AccountMeta::new_readonly(self.fee_program, false),             // #21 - Fee Program
-                AccountMeta::new_readonly(self.pool_v2_pda, false),             //#22 - Pool V2 PDA
+                // remaining_accounts: buyback + pool_v2_pda
+                AccountMeta::new_readonly(PUMPSWAP_BUYBACK_FEE_RECIPIENT, false), // #22 - Buyback Fee Recipient
+                AccountMeta::new(buyback_fee_recipient_token_account, false), // #23 - Buyback Fee Recipient Token Account
+                AccountMeta::new_readonly(self.pool_v2_pda, false),             // #24 - Pool V2 PDA
             ]
         } else {
             let user_volume_accumulator = get_pumpswap_user_volume_accumulator(*signer_pubkey);
@@ -341,16 +364,16 @@ impl PumpSwapStruct {
                 AccountMeta::new(self.pool, false),                    // #1 - Pool
                 AccountMeta::new(*signer_pubkey, true), // #2 - User (Signer, Writable, Fee Payer)
                 AccountMeta::new_readonly(self.global_config, false), // #3 - Global Config
-                AccountMeta::new_readonly(self.base_mint, false), // #4 - Base Mint (WSOL)
-                AccountMeta::new_readonly(self.quote_mint, false), // #5 - Quote Mint (TSFart)
+                AccountMeta::new_readonly(self.base_mint, false), // #4 - Base Mint
+                AccountMeta::new_readonly(self.quote_mint, false), // #5 - Quote Mint
                 AccountMeta::new(user_base_token_account, false), // #6 - User Base Token Account
                 AccountMeta::new(user_quote_token_account, false), // #7 - User Quote Token Account
                 AccountMeta::new(self.pool_base_token_account, false), // #8 - Pool Base Token Account
                 AccountMeta::new(self.pool_quote_token_account, false), // #9 - Pool Quote Token Account
                 AccountMeta::new_readonly(self.protocol_fee_recipient, false), // #10 - Protocol Fee Recipient
                 AccountMeta::new(self.protocol_fee_recipient_token_account, false), // #11 - Protocol Fee Recipient Token Account
-                AccountMeta::new_readonly(self.base_token_program, false), // #12 - Base Token Program (Token Program)
-                AccountMeta::new_readonly(self.quote_token_program, false), // #13 - Quote Token Program (Token Program)
+                AccountMeta::new_readonly(self.base_token_program, false), // #12 - Base Token Program
+                AccountMeta::new_readonly(self.quote_token_program, false), // #13 - Quote Token Program
                 AccountMeta::new_readonly(self.system_program, false),      // #14 - System Program
                 AccountMeta::new_readonly(self.associated_token_program, false), // #15 - Associated Token Program
                 AccountMeta::new_readonly(self.event_authority, false), // #16 - Event Authority
@@ -361,7 +384,10 @@ impl PumpSwapStruct {
                 AccountMeta::new_readonly(self.fee_program, false),             // #21 - Fee Program
                 AccountMeta::new(user_volume_accumulator_wsol_ata, false), // #22 - User volume accumulator wsol ata
                 AccountMeta::new(user_volume_accumulator, false), // #23 - User volume accumulator
-                AccountMeta::new_readonly(self.pool_v2_pda, false), //#24 - Pool V2 PDA
+                // remaining_accounts: buyback + pool_v2_pda
+                AccountMeta::new_readonly(PUMPSWAP_BUYBACK_FEE_RECIPIENT, false), // #24 - Buyback Fee Recipient
+                AccountMeta::new(buyback_fee_recipient_token_account, false), // #25 - Buyback Fee Recipient Token Account
+                AccountMeta::new_readonly(self.pool_v2_pda, false), // #26 - Pool V2 PDA
             ]
         };
 

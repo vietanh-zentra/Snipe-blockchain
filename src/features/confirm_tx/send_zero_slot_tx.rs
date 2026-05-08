@@ -16,7 +16,7 @@ use crate::BOT_RUN_STATE;
 pub async fn send_0slot_transaction(
     raw_instructions: Vec<Instruction>,
     keypair: Keypair,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
     let start_time = Instant::now();
 
     let run_state = BOT_RUN_STATE.read().await.clone();
@@ -82,6 +82,7 @@ pub async fn send_0slot_transaction(
     let response_json: serde_json::Value = response.json().await?;
 
     if let Some(result) = response_json.get("result") {
+        let hash_str = result.as_str().unwrap_or("").to_string();
         info!(
             "[✔ SUBMIT]
             \tTransaction(zero slot) submission took: {:?}
@@ -90,10 +91,12 @@ pub async fn send_0slot_transaction(
             tx_submission_start.elapsed(),
             result,
         );
+        Ok(Some(hash_str))
     } else if let Some(error) = response_json.get("error") {
         eprintln!("Failed to send transaction: {}", error);
+        Ok(None)
+    } else {
+        Ok(None)
     }
-
-    Ok(())
 }
 

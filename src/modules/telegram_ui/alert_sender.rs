@@ -93,7 +93,7 @@ pub fn alert_panic_sell_triggered(mint: &str, seller: &str, drop_pct: f64) {
     send_telegram_alert(msg);
 }
 
-/// Send alert when a buy transaction is submitted.
+/// Send alert when a buy transaction is submitted (unconfirmed fallback).
 pub fn alert_buy_success(mint: &str, price: f64) {
     let msg = format!(
         "📤 *BUY SUBMITTED*\n\n\
@@ -101,6 +101,31 @@ pub fn alert_buy_success(mint: &str, price: f64) {
         Price: {:.10} SOL\n\
         \n_Transaction sent. Waiting for on-chain confirmation..._",
         mint, price
+    );
+    send_telegram_alert(msg);
+}
+
+/// Send alert when a buy is confirmed SUCCESS on-chain.
+pub fn alert_buy_confirmed(mint: &str, price: f64, tx_hash: &str) {
+    let msg = format!(
+        "✅ *BUY SUCCESS*\n\n\
+        Token: `{}`\n\
+        Price: {:.10} SOL\n\
+        Tx: `{}`\n\
+        \n_Token acquired! Monitoring for TP/SL..._",
+        mint, price, tx_hash
+    );
+    send_telegram_alert(msg);
+}
+
+/// Send alert when a buy FAILED on-chain.
+pub fn alert_buy_failed(mint: &str, reason: &str) {
+    let msg = format!(
+        "❌ *BUY FAILED*\n\n\
+        Token: `{}`\n\
+        Reason: `{}`\n\
+        \n_Transaction failed on-chain. No funds lost._",
+        mint, reason
     );
     send_telegram_alert(msg);
 }

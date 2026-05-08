@@ -181,6 +181,40 @@ pub async fn execute_trade(trade_data: &DashMap<Pubkey, TokenDatabaseSchema>) {
         // ── Kết thúc Anti-Rug Filter ─────────────────────────────────
 
         // Token đã pass filter → thực hiện MUA
+        // Panic sell context is passed in so monitor only starts after buy is confirmed on-chain
+        let anti_rug_cfg = run_state.anti_rug.clone();
+        let panic_sell_enabled = anti_rug_cfg.enabled && anti_rug_cfg.panic_sell_enabled;
+
+        // Pre-build watched wallets list (needs async RPC calls)
+        let mut watched_wallets: Vec<Pubkey> = Vec::new();
+        if panic_sell_enabled {
+            watched_wallets.push(token_data.token_creator); // Dev wallet
+            let top_n = anti_rug_cfg.panic_sell_watch_top_holders as usize;
+            if top_n > 0 {
+                if let Ok(largest) = RPC_CLIENT
+                    .get_token_largest_accounts(&token_data.token_mint)
+                    .await
+                {
+                    for acc in largest.iter().take(top_n) {
+                        if let Ok(token_acc_pubkey) = acc.address.parse::<Pubkey>() {
+                            if let Ok(account) = RPC_CLIENT.get_account(&token_acc_pubkey).await {
+                                if account.data.len() >= 64 {
+                                    let owner = Pubkey::try_from(&account.data[32..64])
+                                        .unwrap_or_default();
+                                    if owner != token_data.token_creator
+                                        && owner != signer_pubkey
+                                        && owner != Pubkey::default()
+                                    {
+                                        watched_wallets.push(owner);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         execute_pumpswap_buy(
             &token_data.pumpswap_ix_accounts,
             &keypair,
@@ -190,86 +224,25 @@ pub async fn execute_trade(trade_data: &DashMap<Pubkey, TokenDatabaseSchema>) {
             token_data.token_creator,
             token_data.is_cashback_coin,
             run_state.trading.slippage,
+            // Panic sell context — only used after buy confirmation
+            panic_sell_enabled,
+            token_data.token_mint,
+            token_data.token_balance,
+            anti_rug_cfg.panic_sell_jito_tip_lamports,
+            watched_wallets,
         );
-
-        // Send buy notification to Telegram
-        crate::modules::telegram_ui::alert_sender::alert_buy_success(
-            &token_data.token_mint.to_string(),
-            token_data.token_price,
-        );
+        // Buy notification + panic sell monitor are now handled inside execute_pumpswap_buy
 
         if let Some(mut db_entry) = TOKEN_DB.get(token_data.token_mint).ok().flatten() {
             db_entry.sniper_trade_state = SniperTradeStatus::BuySubmitted;
             let _ = TOKEN_DB.upsert(token_data.token_mint, db_entry);
         }
-
-        // ── Module 2: Panic-Sell Monitor (post-buy) ──────────────────
-        let anti_rug_cfg = run_state.anti_rug.clone();
-        if anti_rug_cfg.enabled && anti_rug_cfg.panic_sell_enabled {
-            use crate::modules::anti_rug::panic_sell::{PanicSellContext, start_panic_sell_monitor};
-
-            // Brief L303, L310: Xác định Dev + Top 3 holders lớn nhất
-            let mut watched = vec![token_data.token_creator]; // Dev wallet
-            let top_n = anti_rug_cfg.panic_sell_watch_top_holders as usize;
-            if top_n > 0 {
-                if let Ok(largest) = RPC_CLIENT
-                    .get_token_largest_accounts(&token_data.token_mint)
-                    .await
-                {
-                    for acc in largest.iter().take(top_n) {
-                        // acc.address là String (base58 token account address)
-                        // Parse → Pubkey, sau đó lấy owner từ account data
-                        if let Ok(token_acc_pubkey) = acc.address.parse::<Pubkey>() {
-                            if let Ok(account) = RPC_CLIENT.get_account(&token_acc_pubkey).await {
-                                // SPL Token Account layout: owner at bytes 32..64
-                                if account.data.len() >= 64 {
-                                    let owner = Pubkey::try_from(&account.data[32..64])
-                                        .unwrap_or_default();
-                                    if owner != token_data.token_creator
-                                        && owner != signer_pubkey
-                                        && owner != Pubkey::default()
-                                    {
-                                        watched.push(owner);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            info!(
-                "[PANIC_SELL] 🔍 Watching {} wallets for mint {}",
-                watched.len(), token_data.token_mint
-            );
-
-            let ctx = PanicSellContext {
-                token_mint: token_data.token_mint,
-                pumpswap_accounts: token_data.pumpswap_ix_accounts,
-                keypair: keypair.insecure_clone(),
-                token_balance: token_data.token_balance,
-                token_creator: token_data.token_creator,
-                is_cashback_coin: token_data.is_cashback_coin,
-                jito_tip_lamports: anti_rug_cfg.panic_sell_jito_tip_lamports,
-                watched_wallets: watched,
-            };
-
-            let handle = start_panic_sell_monitor(ctx);
-            // Fix BUG-1: Lưu handle vào global map để monitor không bị cancel
-            // Handle sẽ bị remove + cancel khi TP/SL bán xong
-            crate::modules::anti_rug::panic_sell::store_panic_sell_handle(
-                token_data.token_mint, handle,
-            );
-            info!(
-                "[PANIC_SELL] 🔍 Monitor started for mint {}",
-                token_data.token_mint
-            );
-        }
-        // ── End Module 2 ─────────────────────────────────────────────
     }
 }
 
 /// Builds create-ATA + wrap SOL + buy instructions and spawns confirmation.
 /// buy_amount_sol is the SOL amount to spend (e.g. 0.1); token_price_sol is current pool price.
+/// Panic sell monitor only starts AFTER buy is confirmed on-chain.
 pub fn execute_pumpswap_buy(
     pumpswap_struct: &PumpSwapStruct,
     keypair: &Keypair,
@@ -279,6 +252,12 @@ pub fn execute_pumpswap_buy(
     token_creator: Pubkey,
     is_cashback_enabled: bool,
     slippage: f64,
+    // Panic sell context
+    panic_sell_enabled: bool,
+    token_mint: Pubkey,
+    token_balance: u64,
+    panic_sell_jito_tip: u64,
+    watched_wallets: Vec<Pubkey>,
 ) {
     let mut ps = *pumpswap_struct;
 
@@ -301,8 +280,82 @@ pub fn execute_pumpswap_buy(
     ix.push(close_ix);
 
     let keypair_owned = keypair.insecure_clone();
+    let mint_str = ps.base_mint.to_string();
+    let price = token_price_sol;
+    let ps_copy = ps; // Copy for panic sell context
     tokio::spawn(async move {
-        let _ = send_0slot_transaction(ix, keypair_owned).await;
+        match send_0slot_transaction(ix, keypair_owned.insecure_clone()).await {
+            Ok(Some(hash)) => {
+                // Wait and confirm on-chain
+                use solana_sdk::signature::Signature;
+                use std::str::FromStr;
+                if let Ok(sig) = Signature::from_str(&hash) {
+                    // Poll RPC for confirmation (max 15 seconds)
+                    let mut confirmed = false;
+                    for _ in 0..15 {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        if let Ok(status) = RPC_CLIENT.get_signature_status(&sig).await {
+                            if let Some(result) = status {
+                                if result.is_ok() {
+                                    confirmed = true;
+                                    break;
+                                } else {
+                                    // Transaction failed on-chain
+                                    info!("[❌ BUY FAILED] Mint: {} | Hash: {}", mint_str, hash);
+                                    crate::modules::telegram_ui::alert_sender::alert_buy_failed(&mint_str, &hash);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    if confirmed {
+                        info!("[✅ BUY SUCCESS] Mint: {} | Hash: {}", mint_str, hash);
+                        crate::modules::telegram_ui::alert_sender::alert_buy_confirmed(&mint_str, price, &hash);
+
+                        // ── Start Panic-Sell Monitor ONLY after buy confirmed ──
+                        if panic_sell_enabled && !watched_wallets.is_empty() {
+                            use crate::modules::anti_rug::panic_sell::{PanicSellContext, start_panic_sell_monitor};
+
+                            info!(
+                                "[PANIC_SELL] 🔍 Watching {} wallets for mint {}",
+                                watched_wallets.len(), token_mint
+                            );
+
+                            let ctx = PanicSellContext {
+                                token_mint,
+                                pumpswap_accounts: ps_copy,
+                                keypair: keypair_owned.insecure_clone(),
+                                token_balance,
+                                token_creator,
+                                is_cashback_coin: is_cashback_enabled,
+                                jito_tip_lamports: panic_sell_jito_tip,
+                                watched_wallets,
+                            };
+
+                            let handle = start_panic_sell_monitor(ctx);
+                            crate::modules::anti_rug::panic_sell::store_panic_sell_handle(
+                                token_mint, handle,
+                            );
+                            info!(
+                                "[PANIC_SELL] 🔍 Monitor started for mint {}",
+                                token_mint
+                            );
+                        }
+                    } else {
+                        info!("[⏳ BUY UNCONFIRMED] Mint: {} | Hash: {}", mint_str, hash);
+                        crate::modules::telegram_ui::alert_sender::alert_buy_success(&mint_str, price);
+                    }
+                }
+            }
+            Ok(None) => {
+                info!("[❌ BUY REJECTED] Mint: {} — tx rejected by RPC", mint_str);
+                crate::modules::telegram_ui::alert_sender::alert_buy_failed(&mint_str, "rejected");
+            }
+            Err(e) => {
+                info!("[❌ BUY ERROR] Mint: {} — {}", mint_str, e);
+                crate::modules::telegram_ui::alert_sender::alert_buy_failed(&mint_str, &e.to_string());
+            }
+        }
     });
 }
 
