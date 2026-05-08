@@ -566,9 +566,13 @@ async fn handle_callback(
             bot.send_message(chat_id, format!("M2 Panic-Sell: {s}")).await?;
             send_anti_rug_menu(&bot, chat_id, &state).await?;
         }
-        "ar_holder30" => { BOT_RUN_STATE.write().await.anti_rug.max_top10_holder_pct = 30.0; bot.send_message(chat_id, "Max holder: 30%").await?; }
-        "ar_holder40" => { BOT_RUN_STATE.write().await.anti_rug.max_top10_holder_pct = 40.0; bot.send_message(chat_id, "Max holder: 40%").await?; }
-        "ar_holder50" => { BOT_RUN_STATE.write().await.anti_rug.max_top10_holder_pct = 50.0; bot.send_message(chat_id, "Max holder: 50%").await?; }
+        "ar_holder30" => { BOT_RUN_STATE.write().await.anti_rug.max_top10_holder_pct = 30.0; bot.send_message(chat_id, "Max holder: 30%").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
+        "ar_holder40" => { BOT_RUN_STATE.write().await.anti_rug.max_top10_holder_pct = 40.0; bot.send_message(chat_id, "Max holder: 40%").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
+        "ar_holder50" => { BOT_RUN_STATE.write().await.anti_rug.max_top10_holder_pct = 50.0; bot.send_message(chat_id, "Max holder: 50%").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
+        "ar_devage_2" => { BOT_RUN_STATE.write().await.anti_rug.min_wallet_age_hours = 2; bot.send_message(chat_id, "✅ M3 Dev Age: 2h").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
+        "ar_devage_6" => { BOT_RUN_STATE.write().await.anti_rug.min_wallet_age_hours = 6; bot.send_message(chat_id, "✅ M3 Dev Age: 6h").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
+        "ar_devage_12" => { BOT_RUN_STATE.write().await.anti_rug.min_wallet_age_hours = 12; bot.send_message(chat_id, "✅ M3 Dev Age: 12h").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
+        "ar_devage_24" => { BOT_RUN_STATE.write().await.anti_rug.min_wallet_age_hours = 24; bot.send_message(chat_id, "✅ M3 Dev Age: 24h").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
         _ => {}
     }
 
@@ -1616,35 +1620,46 @@ async fn send_anti_rug_menu(
     let run = BOT_RUN_STATE.read().await;
     let cfg = &run.anti_rug;
 
-    let on_off = |b: bool| if b { "✅ ON" } else { "❌ OFF" };
+    let icon = |b: bool| if b { "✅" } else { "❌" };
+    let mode_str = if cfg.warn_only { "⚠️ WARN ONLY — buys risky tokens" } else { "🚫 BLOCK — skips risky tokens" };
 
     let text = format!(
-        "🛡️ Anti-Rug Intelligence Layer\n\n\
-         Master: {}\n\
-         Mode: {}\n\n\
-         M1 Holder Filter: {} (max {}%)\n\
-         M2 Panic-Sell: {}\n\
-         M3 Dev Profiler: {} (min {}TX, {}h)\n\
-         M4 Genesis Detector: {}\n\
-         M5 Metadata Checker: {} ({})\n\n\
-         Timeout: {}ms | Jito tip: {} SOL",
-        on_off(cfg.enabled),
-        if cfg.warn_only { "⚠️ WARN ONLY" } else { "🚫 BLOCK" },
-        on_off(cfg.holder_filter_enabled), cfg.max_top10_holder_pct,
-        on_off(cfg.panic_sell_enabled),
-        on_off(cfg.dev_profiler_enabled), cfg.min_dev_tx_count, cfg.min_wallet_age_hours,
-        on_off(cfg.genesis_detector_enabled),
-        on_off(cfg.metadata_checker_enabled), cfg.metadata_empty_action.as_str(),
+        "🛡 *Anti-Rug Intelligence*\n\
+         ━━━━━━━━━━━━━━━━━━━━━\n\n\
+         {} *Master Switch*\n\
+         {}\n\n\
+         ┌─ *Modules*\n\
+         │  {} M1 — Holder Analyzer (top10 ≤ {}%)\n\
+         │  {} M2 — Panic-Sell Monitor\n\
+         │  {} M3 — Dev Wallet (age ≥ {}h, tx ≥ {})\n\
+         │  {} M4 — Genesis Detector\n\
+         └  {} M5 — Metadata Checker\n\n\
+         ⏱ Timeout: {}ms  •  💎 Jito tip: {:.4} SOL",
+        icon(cfg.enabled),
+        mode_str,
+        icon(cfg.holder_filter_enabled), cfg.max_top10_holder_pct,
+        icon(cfg.panic_sell_enabled),
+        icon(cfg.dev_profiler_enabled), cfg.min_wallet_age_hours, cfg.min_dev_tx_count,
+        icon(cfg.genesis_detector_enabled),
+        icon(cfg.metadata_checker_enabled),
         cfg.filter_timeout_ms,
         cfg.panic_sell_jito_tip_lamports as f64 / 1_000_000_000.0,
     );
+
+    // Active indicator for preset buttons
+    let h_sel = |v: f64, target: f64| if (v - target).abs() < 0.1 { "● " } else { "" };
+    let d_sel = |v: u64, target: u64| if v == target { "● " } else { "" };
+    let h_pct = cfg.max_top10_holder_pct;
+    let d_age = cfg.min_wallet_age_hours;
     drop(run);
 
     let kb = InlineKeyboardMarkup::new(vec![
+        // Row 1: Master controls
         vec![
             InlineKeyboardButton::callback("🔌 Master ON/OFF", "ar_master_toggle"),
-            InlineKeyboardButton::callback("⚠️ Warn/Block", "ar_warn_toggle"),
+            InlineKeyboardButton::callback("⚠️ Warn / Block", "ar_warn_toggle"),
         ],
+        // Row 2: Module toggles
         vec![
             InlineKeyboardButton::callback("📊 M1 Holder", "ar_holder_toggle"),
             InlineKeyboardButton::callback("🚨 M2 Panic", "ar_panic_toggle"),
@@ -1655,11 +1670,20 @@ async fn send_anti_rug_menu(
         ],
         vec![
             InlineKeyboardButton::callback("📝 M5 Metadata", "ar_meta_toggle"),
+            InlineKeyboardButton::callback("← Back", "show_main"),
         ],
+        // Row 3: Holder % presets
         vec![
-            InlineKeyboardButton::callback("30%", "ar_holder30"),
-            InlineKeyboardButton::callback("40%", "ar_holder40"),
-            InlineKeyboardButton::callback("50%", "ar_holder50"),
+            InlineKeyboardButton::callback(&format!("{}30%", h_sel(h_pct, 30.0)), "ar_holder30"),
+            InlineKeyboardButton::callback(&format!("{}40%", h_sel(h_pct, 40.0)), "ar_holder40"),
+            InlineKeyboardButton::callback(&format!("{}50%", h_sel(h_pct, 50.0)), "ar_holder50"),
+        ],
+        // Row 4: Dev Age presets
+        vec![
+            InlineKeyboardButton::callback(&format!("{}2h", d_sel(d_age, 2)), "ar_devage_2"),
+            InlineKeyboardButton::callback(&format!("{}6h", d_sel(d_age, 6)), "ar_devage_6"),
+            InlineKeyboardButton::callback(&format!("{}12h", d_sel(d_age, 12)), "ar_devage_12"),
+            InlineKeyboardButton::callback(&format!("{}24h", d_sel(d_age, 24)), "ar_devage_24"),
         ],
     ]);
 

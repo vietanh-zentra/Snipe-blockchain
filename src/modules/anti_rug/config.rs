@@ -80,7 +80,7 @@ impl Default for AntiRugConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            warn_only: false, // Production mode — BLOCK token fail filter
+            warn_only: true, // Default WARN ONLY — buy but warn on risky tokens
             holder_filter_enabled: true,
             max_top10_holder_pct: 30.0,
             dev_profiler_enabled: true,

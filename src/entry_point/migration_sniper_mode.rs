@@ -3,6 +3,9 @@ use yellowstone_grpc_proto::geyser::SubscribeRequestFilterTransactions;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Load .env FIRST — before any Lazy statics (GRPC_ENDPOINT, RPC_ENDPOINT) are accessed
+    let _ = dotenvy::dotenv();
+
     //initialize zero slot http endpoint
     let _http_client = &*ZERO_SLOT_HTTP_CLIENT;
 

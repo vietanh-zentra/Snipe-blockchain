@@ -14,7 +14,7 @@ pub struct StandardConfig {
 pub const STANDARD_CONFIG: StandardConfig = StandardConfig {
     default_buy_amount_sol: 0.1,
     default_slippage_percent: 50,
-    default_cu: 200_000,
+    default_cu: 400_000,
     default_priority_fee_micro_lamport: 100_000,
     default_third_party_fee: 0.001,
     default_take_profit: 120.0,

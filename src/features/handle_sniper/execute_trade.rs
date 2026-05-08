@@ -60,6 +60,17 @@ pub async fn execute_trade(trade_data: &DashMap<Pubkey, TokenDatabaseSchema>) {
             token_data.token_creator,
             token_data.is_cashback_coin,
         );
+
+        // Send sell notification based on reason
+        let mint_str = token_data.token_mint.to_string();
+        if token_data.tp_state == TPMode::Tp {
+            crate::modules::telegram_ui::alert_sender::alert_take_profit(&mint_str);
+        } else if token_data.tp_state == TPMode::SL {
+            crate::modules::telegram_ui::alert_sender::alert_stop_loss(&mint_str);
+        } else if token_data.ts_state == TSMode::TrailingStopTriggered {
+            crate::modules::telegram_ui::alert_sender::alert_trailing_stop(&mint_str);
+        }
+
         if let Some(mut db_entry) = TOKEN_DB.get(token_data.token_mint).ok().flatten() {
             db_entry.token_sell_status = TokenSellStatus::SellTradeSubmitted;
             let _ = TOKEN_DB.upsert(token_data.token_mint, db_entry);
@@ -128,23 +139,43 @@ pub async fn execute_trade(trade_data: &DashMap<Pubkey, TokenDatabaseSchema>) {
                 }
             });
 
-            // Nếu FAIL và không phải warn_only → bỏ qua, không mua
+            // If FAIL and not warn_only → skip, don't buy
             if filter_result.verdict.is_fail() && !anti_rug_cfg.warn_only {
                 let reason_str = reject_reason.as_deref().unwrap_or("unknown reason");
                 info!(
                     "[ANTI-RUG] ❌ SKIP {} — {}",
                     mint_str, reason_str
                 );
-                // Fix #2: Gửi Telegram alert khi skip token
+                // Fix #2: Send Telegram alert when skipping token
                 crate::modules::telegram_ui::alert_sender::alert_token_filtered(
                     &mint_str, reason_str,
                 );
-                // Đánh dấu trong TOKEN_DB để tránh process lại
+                // Mark in TOKEN_DB to avoid reprocessing
                 if let Some(mut db_entry) = TOKEN_DB.get(mint).ok().flatten() {
                     db_entry.sniper_trade_state = SniperTradeStatus::RugDetected;
                     let _ = TOKEN_DB.upsert(mint, db_entry);
                 }
-                continue; // Bỏ qua token này, xử lý token tiếp theo
+                continue; // Skip this token
+            }
+
+            // If FAIL but warn_only → warn but still buy
+            if filter_result.verdict.is_fail() && anti_rug_cfg.warn_only {
+                let reason_str = reject_reason.as_deref().unwrap_or("unknown reason");
+                info!(
+                    "[ANTI-RUG] ⚠️ WARN {} — {} (buying anyway)",
+                    mint_str, reason_str
+                );
+                let warn_msg = format!(
+                    "⚠️ *Anti-Rug Warning*\n\n\
+                    Token: `{}`\n\
+                    Risk: {}/100\n\
+                    Reason: {}\n\n\
+                    _Buying anyway (Warn-Only mode)_",
+                    mint_str,
+                    filter_result.risk_score,
+                    reason_str
+                );
+                crate::modules::telegram_ui::alert_sender::send_telegram_alert(warn_msg);
             }
         }
         // ── Kết thúc Anti-Rug Filter ─────────────────────────────────
@@ -159,6 +190,12 @@ pub async fn execute_trade(trade_data: &DashMap<Pubkey, TokenDatabaseSchema>) {
             token_data.token_creator,
             token_data.is_cashback_coin,
             run_state.trading.slippage,
+        );
+
+        // Send buy notification to Telegram
+        crate::modules::telegram_ui::alert_sender::alert_buy_success(
+            &token_data.token_mint.to_string(),
+            token_data.token_price,
         );
 
         if let Some(mut db_entry) = TOKEN_DB.get(token_data.token_mint).ok().flatten() {

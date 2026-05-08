@@ -1,0 +1,678 @@
+================================================================================
+           TASK BRIEF — PUMP FUN SNIPER BOT IMPROVEMENT
+           (Dành cho team thực hiện — Nội bộ)
+================================================================================
+Ngày tạo         : 28/04/2026
+Cập nhật lần cuối : 28/04/2026
+Trạng thái        : BẮT ĐẦU NGAY
+
+================================================================================
+I. PHÂN PHA DỰ ÁN
+================================================================================
+
+  PHASE 1 (ĐANG THỰC HIỆN):
+    • Tên          : Migration Sniper Bot — Anti-Rug Intelligence Layer
+    • Deadline      : Thứ Tư, 06/05/2026
+    • Trạng thái    : BẮT ĐẦU NGAY
+
+  PHASE 2 (SẼ LÀM SAU):
+    • Tên          : Pump.fun New Token Sniper — Genesis Filter
+    • Deadline      : TBD
+
+================================================================================
+II. PHÂN CÔNG NHÂN SỰ
+================================================================================
+
+┌──────────────────┬──────────────┬────────────────────────────────────────────┐
+│ Họ và tên        │ Vai trò      │ Trách nhiệm                              │
+├──────────────────┼──────────────┼────────────────────────────────────────────┤
+│ Đàm Văn Hoà      │ Lead Dev     │ Chịu trách nhiệm chính toàn bộ dự án     │
+│                  │              │ - Audit codebase & xác định bottleneck    │
+│                  │              │ - Thiết kế Anti-Rug Intelligence Layer    │
+│                  │              │ - Implement core filtering modules        │
+│                  │              │ - Code review & QA                        │
+│                  │              │ - Báo cáo tiến độ                         │
+├──────────────────┼──────────────┼────────────────────────────────────────────┤
+│ Nguyễn Thanh Thuỷ │ Dev          │ Hỗ trợ thực hiện                          │
+│                  │              │ - Implement các module được phân công     │
+│                  │              │ - Testing & paper-trading                 │
+│                  │              │ - Viết unit tests                         │
+└──────────────────┴──────────────┴────────────────────────────────────────────┘
+
+================================================================================
+III. KIẾN THỨC NỀN TẢNG — ĐỌC KỸ TRƯỚC KHI LÀM
+     (Dành cho thành viên mới hoặc chưa quen hệ sinh thái Solana DeFi)
+================================================================================
+
+A. SOLANA LÀ GÌ?
+─────────────────
+  Solana là một blockchain layer-1 tốc độ cao (400ms/block, ~65,000 TPS).
+  Đặc điểm khác biệt so với Ethereum:
+    • KHÔNG có mempool công khai — dùng Gulf Stream forward TX trực tiếp
+      đến validator leader hiện tại.
+    • Phí giao dịch rất thấp (~$0.001/TX).
+    • Mỗi block ~400ms → mọi thứ phải xử lý CỰC NHANH.
+    • Token chuẩn: SPL Token (tương đương ERC-20 trên Ethereum).
+
+B. PUMP.FUN LÀ GÌ?
+────────────────────
+  Pump.fun là nền tảng tạo token trên Solana. Bất kỳ ai cũng có thể tạo
+  token mới trong vài giây mà không cần code. Đây là lý do có hàng nghìn
+  token mới mỗi ngày.
+
+  Cách hoạt động:
+    1. Người tạo (dev) tạo token mới trên Pump.fun
+    2. Token bắt đầu giao dịch theo "Bonding Curve" (xem bên dưới)
+    3. Khi đạt đủ điều kiện (100% bonding curve), token "migrate" sang
+       sàn giao dịch phi tập trung (DEX)
+
+C. BONDING CURVE LÀ GÌ?
+─────────────────────────
+  Bonding Curve là cơ chế định giá tự động của Pump.fun:
+
+    • Khi mới tạo, giá token RẤT THẤP
+    • Mỗi lần có người MUA → giá TĂNG theo đường cong toán học
+    • Mỗi lần có người BÁN → giá GIẢM
+    • Khi tổng vốn mua đạt ~$69,000 (khoảng 400 SOL) → bonding curve
+      đạt 100% → token tự động "migrate"
+
+  Ví dụ đơn giản:
+    Người mua đầu tiên  → giá 0.000001 SOL/token
+    Người mua thứ 100   → giá 0.001 SOL/token
+    Người mua thứ 1000  → giá 0.1 SOL/token
+    → Ai mua sớm nhất thì lời nhiều nhất (nếu token không bị rug)
+
+D. MIGRATION (DI CƯ TOKEN) LÀ GÌ?
+────────────────────────────────────
+  Khi bonding curve đạt 100%, token được "migrate" từ Pump.fun sang
+  PumpSwap — một DEX (sàn giao dịch phi tập trung) của chính Pump.fun.
+
+  Quá trình migration:
+    1. Bonding curve đạt 100%
+    2. Thanh khoản (liquidity) được tạo trên PumpSwap pool
+    3. Token bắt đầu giao dịch trên PumpSwap theo cơ chế AMM
+       (Automated Market Maker) thay vì bonding curve
+
+  ⚠ QUAN TRỌNG:
+    Trước đây, Pump.fun migrate sang Raydium (DEX khác trên Solana).
+    Nhưng hiện tại đã chuyển hoàn toàn sang PUMPSWAP.
+    → Trong dự án này, migration = PumpSwap. KHÔNG PHẢI Raydium.
+
+E. SNIPER BOT LÀ GÌ?
+──────────────────────
+  Sniper Bot là bot tự động phát hiện token mới và MUA CỰC NHANH
+  (trong vòng mili-giây) trước khi đám đông kịp mua.
+
+  Tại sao cần nhanh?
+    • Giá token tăng theo bonding curve → ai mua sớm nhất → giá rẻ nhất
+    • Sau khi giá tăng, bot bán ra → kiếm lời
+    • Nếu chậm 1-2 giây, giá đã tăng → lợi nhuận giảm hoặc mất
+
+  Luồng hoạt động cơ bản:
+    [gRPC stream] → [Phát hiện token mới] → [Mua ngay] → [Chờ giá tăng]
+    → [Bán khi đạt TP] hoặc [Bán khi chạm SL]
+
+  Bot hiện tại của dự án:
+    • Bot 1: Snipe token MỚI TRÊN PUMP.FUN (bonding curve phase)
+    • Bot 2: Snipe token ĐÃ MIGRATE SANG PUMPSWAP
+    → Phase 1 chúng ta sửa Bot 2 (Migration Sniper)
+
+F. RUG-PULL LÀ GÌ? (VẤN ĐỀ CỐT LÕI CỦA DỰ ÁN)
+───────────────────────────────────────────────────
+  Rug-pull ("kéo thảm") là hình thức lừa đảo phổ biến nhất trên DeFi:
+
+  Kịch bản rug-pull điển hình:
+    1. Dev tạo token mới trên Pump.fun
+    2. Dev dùng nhiều ví ẩn mua 50-80% supply (giá rẻ)
+    3. Token được pump (tăng giá) thu hút người mua
+    4. Khi giá đủ cao, dev BÁN HẾT supply → giá sập về 0
+    5. Tất cả người mua sau dev đều MẤT TIỀN
+
+  Các kiểu rug phổ biến mà bot đang gặp:
+
+    Kiểu 1 — Genesis Bundle Rug:
+      Dev dùng Jito Bundle để mua 50-80% supply bằng 5-10 ví ẩn
+      trong CÙNG BLOCK tạo token. Nhìn bề ngoài tưởng có nhiều người
+      mua, nhưng thực ra tất cả là ví của dev.
+
+    Kiểu 2 — Quick Dump After Migration:
+      Token migrate sang PumpSwap → dev và early snipers bán hết ngay
+      lập tức → giá sập. Bot mua vào lúc migrate = mua đỉnh.
+
+    Kiểu 3 — Fresh Wallet Rug:
+      Dev tạo ví mới hoàn toàn, fund từ sàn CEX (Binance/KuCoin),
+      tạo token, rug, rồi bỏ ví. Không trace được.
+
+    Kiểu 4 — Whale Dump:
+      Không phải dev, nhưng top holders (những người mua sớm nhất)
+      bán hết cùng lúc → giá sập.
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  VẤN ĐỀ CỦA BOT HIỆN TẠI:                                           │
+  │  Bot thấy migration → MUA NGAY → không kiểm tra gì cả → ĂN RUG     │
+  │                                                                       │
+  │  NHIỆM VỤ CỦA TEAM:                                                  │
+  │  Xây "Anti-Rug Intelligence Layer" → kiểm tra token TRƯỚC khi mua   │
+  │  → nếu phát hiện dấu hiệu rug → KHÔNG MUA hoặc BÁN NGAY           │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+G. YELLOWSTONE gRPC LÀ GÌ?
+────────────────────────────
+  Yellowstone là plugin Geyser của Solana, cho phép stream dữ liệu
+  blockchain theo thời gian thực qua gRPC protocol.
+
+  Tại sao dùng gRPC thay vì REST API?
+    • REST API: Gửi request → chờ response → chậm (100-500ms)
+    • gRPC stream: Dữ liệu được PUSH liên tục → nhanh (<1ms)
+    • Với sniper bot, mỗi mili-giây đều quan trọng
+
+  Provider: Shyft.to
+    • Dự án đang dùng Shyft.to làm gRPC provider
+    • Shyft cung cấp node Solana + Yellowstone gRPC
+    • Đã trả phí → không cần setup node riêng
+
+H. JITO VÀ MEV LÀ GÌ?
+────────────────────────
+  MEV (Maximal Extractable Value):
+    Là lợi nhuận mà validator/searcher có thể kiếm được bằng cách
+    SẮP XẾP THỨ TỰ transactions trong block theo ý muốn.
+
+  Jito:
+    Jito là hệ thống MEV cho Solana. Jito cung cấp:
+
+    1. Jito Block Engine:
+       • Cho phép gửi "Bundle" (gói nhiều TX lại)
+       • Bundle được đảm bảo thực thi THEO THỨ TỰ trong cùng block
+       • Trả "tip" cho validator để bundle được ưu tiên
+
+    2. Jito Pseudo-Mempool:
+       • Solana KHÔNG có mempool công khai
+       • Nhưng Jito vận hành một hệ thống tương tự mempool cho
+         MEV searchers
+       • Cho phép "nhìn thấy" TX pending trước khi chúng finalize
+       • → Đây là cách bot có thể front-run (bán trước dev)
+
+  Ứng dụng trong dự án:
+    • Module Panic-Sell: Khi detect dev đang chuẩn bị bán (qua Jito
+      mempool), bot gửi Jito Bundle với tip cao hơn để BÁN TRƯỚC dev
+      trong cùng block → tránh lỗ do rug.
+
+I. CÁC THUẬT NGỮ THƯỜNG GẶP
+──────────────────────────────
+  • SOL         : Token gốc của Solana (dùng trả phí, mua token khác)
+  • SPL Token   : Chuẩn token trên Solana (tương đương ERC-20)
+  • DEX         : Sàn giao dịch phi tập trung (không cần đăng ký)
+  • AMM         : Automated Market Maker (cơ chế tạo lập thị trường tự động)
+  • Liquidity   : Thanh khoản (tiền trong pool để giao dịch)
+  • Slippage    : Độ trượt giá (chênh lệch giá kỳ vọng vs giá thực tế)
+  • TP          : Take Profit (mức giá bán để chốt lời)
+  • SL          : Stop Loss (mức giá bán để cắt lỗ)
+  • Trailing    : Trailing Stop (SL di động, tự nâng theo giá)
+  • Lamport     : Đơn vị nhỏ nhất của SOL (1 SOL = 1,000,000,000 lamports)
+  • CU          : Compute Unit (đơn vị tính phí xử lý trên Solana)
+  • Priority Fee: Phí ưu tiên (trả thêm để TX được xử lý nhanh hơn)
+  • Bundle      : Gói nhiều TX gửi qua Jito, đảm bảo thực thi theo thứ tự
+  • Tip         : Tiền "boa" cho validator khi gửi Jito Bundle
+  • CEX         : Sàn giao dịch tập trung (Binance, KuCoin, OKX...)
+  • Whale       : Người nắm giữ lượng lớn token
+  • Paper-trade : Giao dịch giả lập (không dùng tiền thật) để test logic
+
+================================================================================
+IV. BỐI CẢNH DỰ ÁN HIỆN TẠI
+================================================================================
+
+A. HỆ THỐNG HIỆN CÓ:
+  • 2 bot sniper đang chạy (functional):
+      Bot 1: Pump.fun sniper (newly minted tokens)
+      Bot 2: Migration sniper (PumpSwap migrated tokens)  ← PHASE 1 SỬA BOT NÀY
+  • Infrastructure: Yellowstone gRPC qua Shyft.to (top-tier speed)
+  • Bot viết bằng Rust
+  • Có Telegram UI + Telegram Alert system
+  • Có PostgreSQL database
+  • Có hệ thống TP/SL/Trailing cơ bản
+
+  ⚠ Phase 1 CHỈ tập trung vào Bot 2 (Migration Sniper).
+    Bot 1 sẽ được nâng cấp ở Phase 2.
+
+B. VẤN ĐỀ CỐT LÕI:
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  BOT ĐANG THUA LỖ VÌ MUA PHẢI TOKEN RUG-PULL                        │
+  │                                                                       │
+  │  Bot hiện tại chỉ PHÁT HIỆN token mới → MUA NGAY mà KHÔNG có bộ lọc │
+  │  thông minh để đánh giá chất lượng token trước khi quyết định mua.   │
+  │                                                                       │
+  │  → Cần xây dựng "Anti-Rug Intelligence Layer" để bot có khả năng     │
+  │    PHÂN TÍCH & LỌC token trước khi thực hiện lệnh mua.              │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+  KPI THÀNH CÔNG (Phase 1):
+    • Giảm đáng kể số lượng token rug-pull bị mua
+    • Bot tự động skip token có dấu hiệu rug (holder tập trung, dev bán)
+    • Panic-sell kịp thời khi phát hiện dev/whale bán → giảm tổn thất
+    • Không miss quá nhiều token tốt do filter quá chặt
+    • Bot chạy ổn định 24h+ không crash, không memory leak
+
+C. THỨ TỰ ƯU TIÊN:
+  → Migration Bot (PumpSwap) TRƯỚC — đây là Phase 1
+  → Pump.fun New Token Sniper sẽ làm ở Phase 2
+
+  ⚠ LƯU Ý QUAN TRỌNG:
+    PumpFun migration hiện tại là trên PUMPSWAP, KHÔNG PHẢI RAYDIUM.
+    PumpFun đã chuyển sang PumpSwap từ lâu.
+    → KHÔNG được nhầm lẫn PumpSwap với Raydium trong code hoặc giao tiếp.
+
+================================================================================
+V. SCOPE PHASE 1 — MIGRATION SNIPER BOT IMPROVEMENT
+     (Deadline: 06/05/2026)
+================================================================================
+
+Mục tiêu: Xây dựng Anti-Rug Intelligence Layer cho Migration Bot, giúp bot
+lọc token trước khi mua trên PumpSwap (token đã migrate từ bonding curve).
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 1: Pre-Migration Holder Analysis (Bubble Maps)
+────────────────────────────────────────────────────────────────────────────────
+
+  Mô tả:
+    Khi token đạt 100% bonding curve trên PumpFun và migrate sang PumpSwap,
+    các early sniper thường dump ngay. Bot cần scan phân bố holder TRƯỚC khi
+    mua trên PumpSwap pool.
+
+  Logic:
+    1. Token migrate → event phát hiện qua gRPC
+    2. TRƯỚC khi mua, bot PHẢI:
+       a. Lấy danh sách top 10 holders của token
+       b. Tính tổng % supply mà top 10 nắm giữ
+       c. Nếu top 10 nắm > 30% supply → KHÔNG MUA (flag "unhealthy")
+       d. Nếu top 10 nắm ≤ 30% supply → CHO PHÉP mua (pass filter)
+    3. Log kết quả phân tích vào DB để review sau
+
+  Tham số cấu hình (cho phép user điều chỉnh qua Telegram UI):
+    • max_top10_holder_percent: 30 (default, có thể chỉnh)
+    • min_unique_holders: TBD (xem xét thêm)
+
+  Nguồn data:
+    • Solana RPC: getTokenLargestAccounts
+    • Hoặc parse từ on-chain data qua gRPC
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 2: Dynamic Panic-Sell (Front-running the Rug via Jito)
+────────────────────────────────────────────────────────────────────────────────
+
+  Mô tả:
+    Thiết lập listener chuyên biệt để GIÁM SÁT ví của Dev và Top 3
+    holders. Nếu phát hiện lệnh SELL từ họ, bot NGAY LẬP TỨC bán vị thế
+    của mình TRƯỚC khi lệnh sell của họ finalize.
+
+  Logic:
+    1. Sau khi mua token thành công, bot PHẢI:
+       a. Xác định ví Dev (creator) của token
+       b. Xác định Top 3 holders lớn nhất
+       c. Subscribe gRPC stream theo dõi các ví này
+    2. Khi phát hiện pending SELL instruction từ bất kỳ ví nào:
+       a. Xây dựng Jito Bundle chứa lệnh SELL của bot
+       b. Gắn tip đủ cao để bundle được ưu tiên
+       c. Submit bundle → SELL TRƯỚC dev/whale
+    3. Tất cả phải xảy ra trong cùng 1 block hoặc block kế tiếp
+
+  Cơ chế Jito:
+    • Solana KHÔNG có public mempool — dùng Gulf Stream forward trực tiếp
+    • Jito vận hành pseudo-mempool cho MEV searchers
+    • Bot sử dụng Jito mempool stream để detect pending sells
+    • Gửi Jito Bundle với tip để sequence sell trước dev
+    • Jito Block Engine API là public & miễn phí
+
+  Jito Technical Details:
+    • Block Engine Mainnet: https://mainnet.block-engine.jito.wtf
+    • Tip Accounts (chọn 1 ngẫu nhiên mỗi bundle):
+        96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5
+        HFqU5x63VTqvQss8hp11i4bVqkfRtQo3EZTJrPaKYWo7
+        Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY
+        ADaUMid9yfUytqMBgopwjb2DTLSf5oXbsyq7hPbQELGR
+        DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh
+        ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt
+        DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL
+        3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT
+    • Bundle format: max 5 transactions per bundle
+    • Tip: đặt ở instruction cuối cùng trong TX cuối của bundle
+
+  Tham số cấu hình:
+    • jito_tip_lamports: TBD (dynamic dựa trên vị thế)
+    • panic_sell_enabled: true/false
+    • monitored_wallet_count: 3 (dev + top 2 holders)
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 3: Dev Wallet Profiling (Bonus — nếu kịp thời gian)
+────────────────────────────────────────────────────────────────────────────────
+
+  Mô tả:
+    Trước khi mua, trace nguồn funding của ví dev. Nếu ví mới tạo, funded
+    vài phút trước từ CEX, 0 lịch sử → flag high-risk.
+
+  Logic:
+    1. Lấy địa chỉ ví dev/creator
+    2. Kiểm tra:
+       a. Tuổi ví (account age) — ví < 24h → cảnh báo
+       b. Số lượng TX lịch sử — ví < 10 TX → cảnh báo
+       c. Nguồn funding — nếu từ CEX hot wallet → cảnh báo
+    3. Tổng hợp risk score → quyết định mua/không mua
+
+  Tham số cấu hình:
+    • min_wallet_age_hours: 24
+    • min_historical_tx_count: 10
+    • block_cex_funded: true/false
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 4: Genesis Bundle Detection (Bonus — nếu kịp thời gian)
+────────────────────────────────────────────────────────────────────────────────
+
+  Mô tả:
+    Phát hiện dev dùng Jito bundles để launch token và mua 50-80% supply
+    qua nhiều ví ẩn trong cùng block tạo token.
+
+  Logic:
+    1. Khi phát hiện token mới (hoặc trước khi mua migrated token):
+       a. Phân tích creation block
+       b. Đếm số lượng buy transactions trong block đó
+       c. Kiểm tra xem các buy wallets có liên kết với nhau không
+          (cùng funding source)
+       d. Nếu clustered buys > threshold → ABORT trade
+    2. Log kết quả
+
+  Tham số:
+    • max_genesis_buy_percent: 50 (nếu > 50% supply bị mua trong
+      genesis block → abort)
+    • max_clustered_wallets: 3
+
+────────────────────────────────────────────────────────────────────────────────
+MODULE 5: Social/Metadata Verification (Bonus — nếu kịp thời gian)
+────────────────────────────────────────────────────────────────────────────────
+
+  Mô tả:
+    Token hợp lệ thường có website, Twitter, Telegram links trong metadata.
+    Token không có social metadata → khả năng cao là rug/scam.
+
+  Logic:
+    1. Sau khi phát hiện token, đọc on-chain metadata (Metaplex)
+    2. Kiểm tra:
+       a. Có URI (website) hay không
+       b. URI có resolve được hay không (optional, tốn latency)
+       c. Có description/symbol hợp lệ hay không
+    3. Nếu metadata trống hoàn toàn → flag "no social" → giảm điểm
+
+  Tham số:
+    • require_metadata_uri: true/false
+    • metadata_empty_action: "skip" | "warn" | "allow"
+
+================================================================================
+VI. PHÂN TÍCH CODEBASE
+================================================================================
+
+Source: telegram-migration-sniper-bot
+
+A. TECH STACK
+─────────────
+  • Ngôn ngữ       : Rust (Edition 2024)
+  • Database        : PostgreSQL 16 (via Sea-ORM)
+  • Giao diện       : Telegram Bot UI (teloxide 0.12)
+  • Blockchain      : Solana (solana-sdk 2.2.1, solana-client 2.2.1)
+  • Data stream     : Yellowstone gRPC (Geyser plugin) v8.0.0
+  • gRPC Provider   : Shyft.to
+  • TX relay        : Solana Relayer Adapter (Jito bundles support)
+  • Encryption      : AES-GCM (wallet encryption)
+  • Deploy          : Docker Compose (3 services: postgres, init_db, bot)
+
+B. KIẾN TRÚC MODULE
+────────────────────
+  src/
+  ├── entry_point/
+  │   ├── migration_sniper_mode.rs   ← Main binary: sniper mode
+  │   └── init_db.rs                  ← DB initialization binary
+  │
+  ├── config/
+  │   ├── standard_config.rs          ← Trading defaults
+  │   └── zero_slot_initialization.rs ← Zero-slot RPC endpoint
+  │
+  ├── constants/
+  │   ├── addresses.rs                ← On-chain program IDs
+  │   │   • PumpFun:  6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P
+  │   │   • PumpSwap: pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA
+  │   ├── discriminator.rs            ← Instruction discriminators
+  │   ├── constants.rs                ← Misc constants
+  │   └── mode_str.rs                 ← Mode string identifiers
+  │
+  ├── modules/
+  │   ├── grpc/           ← Yellowstone gRPC subscription (Shyft.to)
+  │   ├── rpc/            ← Solana RPC client
+  │   ├── parse/          ← Transaction parsing logic
+  │   ├── telegram_ui/    ← Telegram control panel (single-user)
+  │   ├── telegram_alert/ ← Notification system (queue-based)
+  │   ├── postgresql/     ← Sea-ORM models & queries
+  │   ├── token_db/       ← In-memory token tracking
+  │   ├── encryption/     ← Wallet key encrypt/decrypt (AES-GCM)
+  │   ├── file/           ← File I/O
+  │   ├── timer/          ← Performance timing
+  │   └── macros/         ← Utility macros
+  │
+  └── features/
+      ├── handle_sniper/  ← Core sniper logic (detect → decide → execute)
+      ├── build_tx/       ← Transaction builder (buy/sell instructions)
+      ├── confirm_tx/     ← TX confirmation & retry
+      └── get_slot/       ← Current slot tracking
+
+C. LUỒNG HOẠT ĐỘNG HIỆN TẠI
+─────────────────────────────
+  1. Khởi tạo HTTP client (zero-slot endpoint)
+  2. Spawn Telegram UI task (control panel)
+  3. Start Telegram alert worker (notifications)
+  4. Spawn recent blockhash handler (loop)
+  5. Kết nối Yellowstone gRPC → subscribe PUMPSWAP_PROGRAM_ID
+  6. Khi phát hiện TX phù hợp → handle_sniper logic
+  7. Build TX → Send (via Jito) → Confirm → Alert Telegram
+
+  ⚠ ĐIỂM YẾU HIỆN TẠI:
+    Bước 6 KHÔNG có bất kỳ bộ lọc nào để đánh giá token.
+    Bot thấy migration → mua ngay → ăn rug.
+    → Đây chính là chỗ cần inject Anti-Rug modules.
+
+D. CẤU HÌNH TRADING MẶC ĐỊNH
+──────────────────────────────
+  • Buy amount    : 0.1 SOL
+  • Slippage      : 50%
+  • Compute Units : 200,000
+  • Priority Fee  : 100,000 micro-lamports
+  • Take Profit   : 120% (lãi 20% → bán)
+  • Stop Loss     : 80% (lỗ 20% → bán)
+  • Trailing       : 110% (kích hoạt trailing khi lãi 10%)
+  • Trailing Stop  : 10%
+
+================================================================================
+VII. KẾ HOẠCH THỰC HIỆN — TIMELINE 8 NGÀY
+================================================================================
+
+  ┌─────────────┬──────────────────────────────────────────────────────────┐
+  │ NGÀY        │ CÔNG VIỆC                                                │
+  ├─────────────┼──────────────────────────────────────────────────────────┤
+  │ Ngày 1      │ AUDIT CODEBASE                                           │
+  │ (28/04)     │ • Đọc hiểu toàn bộ source code                          │
+  │             │ • Map luồng xử lý từ gRPC → handle_sniper → build_tx    │
+  │             │ • Xác định chính xác điểm inject filter modules          │
+  │             │ • Viết báo cáo audit ngắn gọn (cho nội bộ)              │
+  ├─────────────┼──────────────────────────────────────────────────────────┤
+  │ Ngày 2-3    │ MODULE 1: PRE-MIGRATION HOLDER ANALYSIS                  │
+  │ (29-30/04)  │ • Implement hàm lấy top holders (RPC/gRPC)              │
+  │             │ • Implement logic tính % supply concentration            │
+  │             │ • Integrate vào pre-buy evaluation trong handle_sniper   │
+  │             │ • Thêm cấu hình vào Telegram UI                         │
+  │             │ • Unit tests                                             │
+  ├─────────────┼──────────────────────────────────────────────────────────┤
+  │ Ngày 3-5    │ MODULE 2: DYNAMIC PANIC-SELL (JITO FRONT-RUN)            │
+  │ (30/04-     │ • Implement dedicated gRPC listener cho dev wallet       │
+  │  02/05)     │   + top holders                                          │
+  │             │ • Implement Jito Bundle builder cho panic sell           │
+  │             │ • Integrate với confirm_tx flow hiện tại                 │
+  │             │ • Implement dynamic tip calculation                     │
+  │             │ • Unit tests                                             │
+  ├─────────────┼──────────────────────────────────────────────────────────┤
+  │ Ngày 5-6    │ MODULE 3 & 4: DEV WALLET PROFILING & GENESIS DETECTION   │
+  │ (02-03/05)  │ • Implement wallet age & history checker                │
+  │             │ • Implement genesis block analysis                      │
+  │             │ • Implement risk scoring system                         │
+  │             │ • Integrate vào pre-buy evaluation                      │
+  ├─────────────┼──────────────────────────────────────────────────────────┤
+  │ Ngày 7-8    │ TESTING & CALIBRATION                                    │
+  │ (04-05/05)  │ • Paper-trading (simulated execution via gRPC)           │
+  │             │ • Calibrate filter parameters                           │
+  │             │ • Đảm bảo không miss good tokens khi filter bad ones    │
+  │             │ • Bug fixes & edge case handling                        │
+  │             │ • Final QA & delivery                                   │
+  ├─────────────┼──────────────────────────────────────────────────────────┤
+  │ 06/05       │ DEADLINE — SUBMIT PHASE 1                                │
+  └─────────────┴──────────────────────────────────────────────────────────┘
+
+================================================================================
+VIII. HƯỚNG DẪN KỸ THUẬT — ĐIỂM INJECT CODE
+================================================================================
+
+  File chính cần sửa đổi:
+
+  1. src/features/handle_sniper/
+     → Đây là nơi bot quyết định có mua hay không.
+     → INJECT tất cả filter modules VÀO ĐÂY, TRƯỚC khi gọi build_tx.
+     → Tạo thêm module: pre_buy_filter.rs
+
+  2. src/modules/ (thêm mới):
+     → holder_analyzer/     ← Module 1: phân tích holder
+     → panic_sell/          ← Module 2: Jito panic sell listener
+     → wallet_profiler/     ← Module 3: dev wallet profiling
+     → genesis_detector/    ← Module 4: genesis bundle detection
+     → metadata_checker/    ← Module 5: social/metadata verification
+
+  3. src/config/standard_config.rs
+     → Thêm các tham số cấu hình cho filter modules
+
+  4. src/modules/telegram_ui/
+     → Thêm menu/commands để user bật/tắt và cấu hình filter
+
+  5. src/modules/postgresql/
+     → Thêm tables để log kết quả phân tích token (audit trail)
+
+  Nguyên tắc:
+  • KHÔNG phá vỡ luồng hiện tại — chỉ INSERT thêm filter layer
+  • Mỗi filter module phải có thể BẬT/TẮT độc lập
+  • Mỗi filter phải return Pass/Fail + lý do
+  • Tất cả kết quả filter phải được LOG vào DB
+  • Code style phải consistent với codebase hiện tại (Rust idioms)
+
+================================================================================
+IX. INFRASTRUCTURE
+================================================================================
+
+  Đã có sẵn:
+  ✅ Shyft.to gRPC subscription (Yellowstone) — speed đã top-tier
+  ✅ Docker Compose deployment
+  ✅ PostgreSQL database
+  ✅ Telegram Bot
+
+  Cần sử dụng thêm (MIỄN PHÍ):
+  ✅ Jito Block Engine API — public endpoints, free
+     • Mainnet: https://mainnet.block-engine.jito.wtf
+     • Docs: https://jito-labs.gitbook.io/
+
+  → KHÔNG cần mua thêm bất kỳ infra nào.
+
+================================================================================
+X. LƯU Ý QUAN TRỌNG CHO TEAM
+================================================================================
+
+  ⚠ 1. DEADLINE CỨNG: 06/05/2026 — Không có buffer. Phải deliver đúng hạn.
+
+  ⚠ 2. PUMPSWAP, KHÔNG PHẢI RAYDIUM:
+       PumpFun migration hiện tại đi qua PumpSwap protocol.
+       Tuyệt đối KHÔNG nhầm lẫn.
+       Program ID: pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA
+
+  ⚠ 3. SECURITY:
+       - KHÔNG log private keys
+       - KHÔNG commit credentials vào git
+       - Wallet encryption đã có sẵn (AES-GCM) — dùng đúng pattern
+
+  ⚠ 4. BÁO CÁO TIẾN ĐỘ:
+       - Báo cáo tiến độ hàng ngày cho anh Việt Anh
+       - Team KHÔNG liên hệ trực tiếp bên ngoài
+
+  ⚠ 5. CODE QUALITY:
+       - Code clean, documented, consistent Rust style
+       - Unit tests cho mỗi module mới
+       - Docker build phải thành công, không lỗi
+
+================================================================================
+XI. HƯỚNG DẪN MÔI TRƯỜNG PHÁT TRIỂN
+================================================================================
+
+  A. CÀI ĐẶT:
+    1. Cài Rust toolchain: https://rustup.rs/
+    2. Cài Docker & Docker Compose
+    3. Clone source code từ thư mục được cấp
+
+  B. BUILD & CHẠY LOCAL:
+    # Build project
+    cargo build --release
+
+    # Tạo file .env (copy từ template, điền credentials)
+    cp .env.example .env
+
+    # Khởi động PostgreSQL
+    docker compose up -d postgres
+
+    # Init database
+    docker compose run --rm init_db
+
+    # Chạy bot (dev mode — KHÔNG dùng tiền thật khi test)
+    cargo run --bin sniper_mode
+
+    # Hoặc chạy toàn bộ qua Docker
+    docker compose build
+    docker compose up -d migration_sniper_bot
+
+  C. XEM LOGS:
+    docker compose logs -f migration_sniper_bot
+    docker compose logs -f postgres
+
+  D. DỪNG SERVICES:
+    docker compose down        # giữ data
+    docker compose down -v     # xóa cả data DB
+
+================================================================================
+XII. SCOPE PHASE 2 (THAM KHẢO TRƯỚC — CHƯA LÀM)
+================================================================================
+
+  Sẽ thực hiện sau khi Phase 1 hoàn thành — focus vào Bot 1 (Pump.fun
+  newly minted tokens):
+
+  1. Genesis Bundle Detection nâng cao cho newly minted tokens
+  2. Dev Wallet Profiling nâng cao
+  3. Social/Metadata Verification nâng cao
+  4. Paper-trading & calibration cho Pump.fun filter
+  5. Advanced trading strategies (nếu Module 3-5 đã xong ở Phase 1)
+
+================================================================================
+XIII. CHECKLIST BÀN GIAO PHASE 1
+================================================================================
+
+  [ ] Codebase đã audit, hiểu rõ luồng xử lý
+  [ ] Module 1: Pre-Migration Holder Analysis — DONE & TESTED
+  [ ] Module 2: Dynamic Panic-Sell (Jito) — DONE & TESTED
+  [ ] Module 3: Dev Wallet Profiling — DONE & TESTED (nếu kịp)
+  [ ] Module 4: Genesis Bundle Detection — DONE & TESTED (nếu kịp)
+  [ ] Module 5: Social/Metadata Verification — DONE & TESTED (nếu kịp)
+  [ ] Tất cả filter có thể bật/tắt qua Telegram UI
+  [ ] Tất cả kết quả filter được log vào PostgreSQL
+  [ ] Paper-trading chạy ổn ít nhất 24h không crash
+  [ ] Bot giảm được tỉ lệ mua phải rug so với trước
+  [ ] Code clean, documented, consistent Rust style
+  [ ] Docker build thành công, không lỗi
+
+================================================================================
+                              — HẾT —
+================================================================================

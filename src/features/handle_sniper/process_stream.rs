@@ -20,9 +20,10 @@ where
                         continue;
                     };
 
-                let ix_info_pumpfun =
-                    filter_by_program_id(ixs.clone(), inner_ixs.clone(), PUMPFUN_PROGRAM_ID, account_keys.clone())
-                        .unwrap();
+                let ix_info_pumpfun = match filter_by_program_id(ixs.clone(), inner_ixs.clone(), PUMPFUN_PROGRAM_ID, account_keys.clone()) {
+                    Ok(data) => data,
+                    Err(_) => vec![],
+                };
 
                 let ix_info_pumpswap = match filter_by_program_id(
                     ixs.clone(),

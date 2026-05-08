@@ -85,7 +85,7 @@ impl GrpcClientConfig {
         subscribe_args: &SubscribeRequestFilterTransactions,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut grpc_client = self.setup_grpc_client().await?;
-        let (subscribe_tx, subscribe_rx) = grpc_client.subscribe().await.unwrap();
+        let (subscribe_tx, subscribe_rx) = grpc_client.subscribe().await?;
         send_subscription_request_grpc(subscribe_tx, subscribe_args.clone()).await?;
         Ok(process_stream(subscribe_rx).await?)
     }

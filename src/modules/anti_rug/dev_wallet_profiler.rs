@@ -205,7 +205,7 @@ async fn check_cex_funding(
             };
             if let Ok(tx) = tokio::time::timeout(
                 Duration::from_millis(timeout_ms),
-                RPC_CLIENT.get_transaction(&sig, tx_config),
+                RPC_CLIENT.get_transaction_with_config(&sig, tx_config),
             ).await {
                 if let Ok(confirmed_tx) = tx {
                     // Check account keys trong TX
