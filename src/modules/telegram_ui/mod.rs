@@ -206,6 +206,49 @@ async fn handle_message(
         return Ok(());
     }
 
+    if text.eq_ignore_ascii_case("/stats") {
+        match crate::modules::postgresql::db::query_filter_stats().await {
+            Ok((today, week, month, all)) => {
+                let fmt = |s: &crate::modules::postgresql::db::FilterStats, label: &str| -> String {
+                    let pass_rate = if s.total > 0 {
+                        format!("{:.1}%", (s.passed as f64 / s.total as f64) * 100.0)
+                    } else {
+                        "N/A".to_string()
+                    };
+                    format!(
+                        "📊 <b>{}</b>\n\
+                         ├ Total scanned: {}\n\
+                         ├ ✅ Passed: {}\n\
+                         ├ ❌ Failed: {}\n\
+                         ├ ⚠️ Warned: {}\n\
+                         ├ 🚫 Skipped: {}\n\
+                         └ Pass rate: {}\n",
+                        label, s.total, s.passed, s.failed, s.warned, s.skipped, pass_rate
+                    )
+                };
+
+                let text = format!(
+                    "📈 <b>Bot Statistics</b>\n\
+                     ━━━━━━━━━━━━━━━━━\n\n\
+                     {}\n{}\n{}\n{}\n\
+                     <i>💡 PNL tracking coming soon</i>",
+                    fmt(&today, "Today"),
+                    fmt(&week, "Last 7 Days"),
+                    fmt(&month, "Last 30 Days"),
+                    fmt(&all, "All Time"),
+                );
+
+                bot.send_message(chat_id, text)
+                    .parse_mode(teloxide::types::ParseMode::Html)
+                    .await?;
+            }
+            Err(e) => {
+                bot.send_message(chat_id, format!("❌ Stats error: {e}")).await?;
+            }
+        }
+        return Ok(());
+    }
+
     if text == MENU_WALLET {
         open_wallet_management(&bot, chat_id, &state, None).await?;
         return Ok(());
@@ -386,6 +429,7 @@ async fn handle_callback(
         "trading_tip_fee" => {
             send_tip_fee_menu(&bot, chat_id).await?;
         }
+        "buy_0.05" => set_buy_amount_and_reply(&bot, chat_id, allowed_user_id, &state, &db, 0.05).await?,
         "buy_0.1" => set_buy_amount_and_reply(&bot, chat_id, allowed_user_id, &state, &db, 0.1).await?,
         "buy_0.5" => set_buy_amount_and_reply(&bot, chat_id, allowed_user_id, &state, &db, 0.5).await?,
         "buy_1.0" => set_buy_amount_and_reply(&bot, chat_id, allowed_user_id, &state, &db, 1.0).await?,
@@ -574,6 +618,10 @@ async fn handle_callback(
         "ar_devage_6" => { BOT_RUN_STATE.write().await.anti_rug.min_wallet_age_hours = 6; bot.send_message(chat_id, "✅ M3 Dev Age: 6h").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
         "ar_devage_12" => { BOT_RUN_STATE.write().await.anti_rug.min_wallet_age_hours = 12; bot.send_message(chat_id, "✅ M3 Dev Age: 12h").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
         "ar_devage_24" => { BOT_RUN_STATE.write().await.anti_rug.min_wallet_age_hours = 24; bot.send_message(chat_id, "✅ M3 Dev Age: 24h").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
+        // Dev TX count presets (BUG-3 fix: client requested 0/5/10 options)
+        "ar_devtx_0" => { BOT_RUN_STATE.write().await.anti_rug.min_dev_tx_count = 0; bot.send_message(chat_id, "✅ M3 Dev Min TX: 0 (disabled)").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
+        "ar_devtx_5" => { BOT_RUN_STATE.write().await.anti_rug.min_dev_tx_count = 5; bot.send_message(chat_id, "✅ M3 Dev Min TX: 5").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
+        "ar_devtx_10" => { BOT_RUN_STATE.write().await.anti_rug.min_dev_tx_count = 10; bot.send_message(chat_id, "✅ M3 Dev Min TX: 10").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
         "ar_view_skipped" => {
             match crate::modules::postgresql::db::query_recent_skipped_tokens(10).await {
                 Ok(rows) if rows.is_empty() => {
@@ -923,7 +971,10 @@ async fn send_wallet_management_help(
 async fn send_buy_amount_menu(bot: &Bot, chat_id: ChatId) -> BotResult {
     let kb = InlineKeyboardMarkup::new(vec![
         vec![
+            InlineKeyboardButton::callback("0.05 SOL", "buy_0.05"),
             InlineKeyboardButton::callback("0.1 SOL", "buy_0.1"),
+        ],
+        vec![
             InlineKeyboardButton::callback("0.5 SOL", "buy_0.5"),
             InlineKeyboardButton::callback("1 SOL", "buy_1.0"),
         ],
@@ -1679,7 +1730,9 @@ async fn send_anti_rug_menu(
     let d_sel = |v: u64, target: u64| if v == target { "● " } else { "" };
     let h_pct = cfg.max_top10_holder_pct;
     let d_age = cfg.min_wallet_age_hours;
+    let d_tx = cfg.min_dev_tx_count;
     drop(run);
+    let tx_sel = |v: u64, target: u64| if v == target { "● " } else { "" };
 
     let kb = InlineKeyboardMarkup::new(vec![
         // Row 1: Master controls
@@ -1719,6 +1772,12 @@ async fn send_anti_rug_menu(
         vec![
             InlineKeyboardButton::callback(&format!("{}12h", d_sel(d_age, 12)), "ar_devage_12"),
             InlineKeyboardButton::callback(&format!("{}24h", d_sel(d_age, 24)), "ar_devage_24"),
+        ],
+        // Row: Dev TX count presets
+        vec![
+            InlineKeyboardButton::callback(&format!("{}0 TXs", tx_sel(d_tx, 0)), "ar_devtx_0"),
+            InlineKeyboardButton::callback(&format!("{}5 TXs", tx_sel(d_tx, 5)), "ar_devtx_5"),
+            InlineKeyboardButton::callback(&format!("{}10 TXs", tx_sel(d_tx, 10)), "ar_devtx_10"),
         ],
     ]);
 

@@ -95,25 +95,36 @@ pub fn alert_panic_sell_triggered(mint: &str, seller: &str, drop_pct: f64) {
 
 /// Send alert when a buy transaction is submitted (unconfirmed fallback).
 pub fn alert_buy_success(mint: &str, price: f64) {
+    // Read current buy amount from BOT_RUN_STATE for display
+    let buy_amount = crate::modules::telegram_ui::run_state::BOT_RUN_STATE
+        .try_read()
+        .map(|s| s.trading.buy_amount_sol)
+        .unwrap_or(0.0);
     let msg = format!(
         "📤 *BUY SUBMITTED*\n\n\
         Token: `{}`\n\
+        Amount: {} SOL\n\
         Price: {:.10} SOL\n\
         \n_Transaction sent. Waiting for on-chain confirmation..._",
-        mint, price
+        mint, buy_amount, price
     );
     send_telegram_alert(msg);
 }
 
 /// Send alert when a buy is confirmed SUCCESS on-chain.
 pub fn alert_buy_confirmed(mint: &str, price: f64, tx_hash: &str) {
+    let buy_amount = crate::modules::telegram_ui::run_state::BOT_RUN_STATE
+        .try_read()
+        .map(|s| s.trading.buy_amount_sol)
+        .unwrap_or(0.0);
     let msg = format!(
         "✅ *BUY SUCCESS*\n\n\
         Token: `{}`\n\
+        Amount: {} SOL\n\
         Price: {:.10} SOL\n\
         Tx: `{}`\n\
         \n_Token acquired! Monitoring for TP/SL..._",
-        mint, price, tx_hash
+        mint, buy_amount, price, tx_hash
     );
     send_telegram_alert(msg);
 }

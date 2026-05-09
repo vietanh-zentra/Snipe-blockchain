@@ -93,9 +93,12 @@ pub async fn analyze_genesis_block(
                                 .unwrap_or(0.0);
 
                             if amount > 0.0 {
-                                *buyer_amounts
-                                    .entry(owner.clone())
-                                    .or_insert(0.0) += amount;
+                                // Use insert (overwrite) instead of +=
+                                // because post_token_balances is CUMULATIVE.
+                                // If a wallet appears in multiple TXs in the same block,
+                                // its post_balance already includes all previous buys.
+                                // Using += would double-count → values >100%.
+                                buyer_amounts.insert(owner.clone(), amount);
                             }
                         }
                     }
@@ -114,7 +117,7 @@ pub async fn analyze_genesis_block(
 
     // Tổng % supply được mua trong genesis block
     let total_bought: f64 = buyer_amounts.values().sum();
-    let genesis_buy_pct = (total_bought / total_supply) * 100.0;
+    let genesis_buy_pct = ((total_bought / total_supply) * 100.0).min(100.0);
     let unique_buyers = buyer_amounts.len();
 
     // Detect bundle pattern: nhiều ví mua cùng block + tổng % cao

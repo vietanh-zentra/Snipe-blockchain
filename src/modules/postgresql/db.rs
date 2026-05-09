@@ -407,3 +407,94 @@ pub async fn query_recent_skipped_tokens(limit: u64) -> PgResult<Vec<(String, St
     }
     Ok(results)
 }
+
+// ── Stats Query ───────────────────────────────────────────────────────────────
+
+/// Stats result for a time period.
+#[derive(Debug, Clone, Default)]
+pub struct FilterStats {
+    pub total: i64,
+    pub passed: i64,
+    pub failed: i64,
+    pub warned: i64,
+    pub skipped: i64,
+}
+
+/// Query filter stats for different time periods.
+/// Returns (today, 7d, 30d, all_time) stats.
+pub async fn query_filter_stats() -> PgResult<(FilterStats, FilterStats, FilterStats, FilterStats)> {
+    let db = get_shared_db().await?;
+    let now = chrono::Utc::now();
+    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+    let week_start = (now - chrono::Duration::days(7)).naive_utc();
+    let month_start = (now - chrono::Duration::days(30)).naive_utc();
+
+    // Get all filter logs
+    let all_logs = anti_rug_filter_log::Entity::find()
+        .all(db)
+        .await?;
+
+    let mut today = FilterStats::default();
+    let mut week = FilterStats::default();
+    let mut month = FilterStats::default();
+    let mut all = FilterStats::default();
+
+    for log in &all_logs {
+        let ts = log.created_at.naive_utc();
+        let verdict = log.verdict.as_str();
+
+        // All time
+        all.total += 1;
+        match verdict {
+            "pass" => all.passed += 1,
+            "fail" => all.failed += 1,
+            "warn" => all.warned += 1,
+            _ => {}
+        }
+
+        // Monthly
+        if ts >= month_start {
+            month.total += 1;
+            match verdict {
+                "pass" => month.passed += 1,
+                "fail" => month.failed += 1,
+                "warn" => month.warned += 1,
+                _ => {}
+            }
+        }
+
+        // Weekly
+        if ts >= week_start {
+            week.total += 1;
+            match verdict {
+                "pass" => week.passed += 1,
+                "fail" => week.failed += 1,
+                "warn" => week.warned += 1,
+                _ => {}
+            }
+        }
+
+        // Today
+        if ts >= today_start {
+            today.total += 1;
+            match verdict {
+                "pass" => today.passed += 1,
+                "fail" => today.failed += 1,
+                "warn" => today.warned += 1,
+                _ => {}
+            }
+        }
+    }
+
+    // Count skipped tokens per period
+    let all_skipped = skipped_tokens_log::Entity::find().all(db).await?;
+    for skip in &all_skipped {
+        let ts = skip.timestamp.naive_utc();
+        all.skipped += 1;
+        if ts >= month_start { month.skipped += 1; }
+        if ts >= week_start { week.skipped += 1; }
+        if ts >= today_start { today.skipped += 1; }
+    }
+
+    Ok((today, week, month, all))
+}
