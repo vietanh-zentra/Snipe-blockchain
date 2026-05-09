@@ -52,7 +52,7 @@ pub async fn send_0slot_transaction(
     // Sign the transaction with the sender's keypair
     transaction
         .try_sign(&[keypair.insecure_clone()], get_slot())
-        .expect("Failed to sign transaction");
+        .map_err(|e| format!("Failed to sign transaction: {e}"))?;
 
     let serialized_transaction = bincode::serialize(&transaction).unwrap();
     let base64_encoded_transaction = base64::encode(serialized_transaction);

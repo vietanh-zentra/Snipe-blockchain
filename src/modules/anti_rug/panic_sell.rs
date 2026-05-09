@@ -201,6 +201,26 @@ async fn get_token_balance_for_wallet(
 
 /// Gửi Jito bundle để panic sell vị thế hiện tại.
 async fn trigger_jito_panic_sell(ctx: &PanicSellContext) {
+    // P12 fix: Guard against double-sell race condition.
+    // If TP/SL already submitted a sell for this token, abort panic sell.
+    if let Some(db_entry) = crate::TOKEN_DB.get(ctx.token_mint).ok().flatten() {
+        if db_entry.token_sell_status == crate::TokenSellStatus::SellTradeSubmitted {
+            info!(
+                "[PANIC_SELL] ⏹ Aborting — TP/SL sell already submitted for {}",
+                ctx.token_mint
+            );
+            return;
+        }
+        // Also check if balance is now 0 (sell already completed)
+        if db_entry.token_balance == 0 {
+            info!(
+                "[PANIC_SELL] ⏹ Aborting — token balance is 0 for {}",
+                ctx.token_mint
+            );
+            return;
+        }
+    }
+
     let keypair = ctx.keypair.insecure_clone();
     let signer_pubkey = keypair.pubkey();
 
