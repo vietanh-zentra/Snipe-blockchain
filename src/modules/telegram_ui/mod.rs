@@ -1732,7 +1732,6 @@ async fn send_anti_rug_menu(
     let d_age = cfg.min_wallet_age_hours;
     let d_tx = cfg.min_dev_tx_count;
     drop(run);
-    let tx_sel = |v: u64, target: u64| if v == target { "● " } else { "" };
 
     let kb = InlineKeyboardMarkup::new(vec![
         // Row 1: Master controls
@@ -1751,7 +1750,7 @@ async fn send_anti_rug_menu(
         ],
         vec![
             InlineKeyboardButton::callback("📝 M5 Metadata", "ar_meta_toggle"),
-            InlineKeyboardButton::callback("← Back", "show_main"),
+            InlineKeyboardButton::callback("← Back", "go_main"),
         ],
         // Row: View skipped tokens history
         vec![
@@ -1775,9 +1774,9 @@ async fn send_anti_rug_menu(
         ],
         // Row: Dev TX count presets
         vec![
-            InlineKeyboardButton::callback(&format!("{}0 TXs", tx_sel(d_tx, 0)), "ar_devtx_0"),
-            InlineKeyboardButton::callback(&format!("{}5 TXs", tx_sel(d_tx, 5)), "ar_devtx_5"),
-            InlineKeyboardButton::callback(&format!("{}10 TXs", tx_sel(d_tx, 10)), "ar_devtx_10"),
+            InlineKeyboardButton::callback(&format!("{}0 TXs", d_sel(d_tx, 0)), "ar_devtx_0"),
+            InlineKeyboardButton::callback(&format!("{}5 TXs", d_sel(d_tx, 5)), "ar_devtx_5"),
+            InlineKeyboardButton::callback(&format!("{}10 TXs", d_sel(d_tx, 10)), "ar_devtx_10"),
         ],
     ]);
 
