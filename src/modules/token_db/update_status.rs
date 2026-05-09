@@ -8,8 +8,13 @@ pub fn update_status_from_pumpswap_buy_event(
     buy_accounts: PumpswapBuyInstructionAccounts,
     tx_id: String,
 ) -> TokenDatabaseSchema {
-    let updated_token_price = (buy_event.pool_quote_token_reserves as f64 / 10f64.powi(9))
-        / (buy_event.pool_base_token_reserves as f64 / 10f64.powi(6));
+    // P11 fix: Guard against division-by-zero (would produce Inf/NaN, breaking TP/SL logic)
+    let base_reserves = buy_event.pool_base_token_reserves as f64 / 10f64.powi(6);
+    let updated_token_price = if base_reserves > 0.0 {
+        (buy_event.pool_quote_token_reserves as f64 / 10f64.powi(9)) / base_reserves
+    } else {
+        token_data.token_price // Keep previous price if reserves are 0
+    };
 
     token_data.token_peak_price = token_data.token_peak_price.max(updated_token_price);
 
@@ -49,8 +54,13 @@ pub fn update_status_from_pumpswap_sell_event(
     sell_accounts: PumpswapSellInstructionAccounts,
     tx_id: String,
 ) -> Option<TokenDatabaseSchema> {
-    let updated_token_price = (sell_event.pool_quote_token_reserves as f64 / 10f64.powi(9))
-        / (sell_event.pool_base_token_reserves as f64 / 10f64.powi(6));
+    // P11 fix: Guard against division-by-zero
+    let base_reserves = sell_event.pool_base_token_reserves as f64 / 10f64.powi(6);
+    let updated_token_price = if base_reserves > 0.0 {
+        (sell_event.pool_quote_token_reserves as f64 / 10f64.powi(9)) / base_reserves
+    } else {
+        token_data.token_price // Keep previous price if reserves are 0
+    };
 
     token_data.token_creator = sell_event.coin_creator;
     token_data.token_price = updated_token_price;

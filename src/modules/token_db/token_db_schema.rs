@@ -29,8 +29,13 @@ impl TokenDatabaseSchema {
         create_pool_event_data: CreatePoolEventData,
         create_pool_instruction_data: CreatePoolInstructionData,
     ) -> Self {
-        let token_price = (create_pool_event_data.quote_amount_in as f64 / 10f64.powi(9))
-            / (create_pool_event_data.base_amount_in as f64 / 10f64.powi(6));
+        // P11 fix: Guard against division-by-zero on malformed migration event
+        let base_amount = create_pool_event_data.base_amount_in as f64 / 10f64.powi(6);
+        let token_price = if base_amount > 0.0 {
+            (create_pool_event_data.quote_amount_in as f64 / 10f64.powi(9)) / base_amount
+        } else {
+            INITIAL_TOKEN_PRICE // Fallback to known initial price constant
+        };
 
         let token_data = Self {
             token_mint: create_pool_event_data.base_mint,
