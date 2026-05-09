@@ -75,9 +75,15 @@ pub async fn handle_trade_events(
 
     //handle pumpswap instructions
     for (i, pumpswap_buy_event) in pumpswap_buy_events.iter().enumerate() {
+        // Bounds check: ensure accounts vec has matching entry
+        if i >= pumpswap_buy_instruction_accounts.len() {
+            error!("[PARSE_FAIL] Buy event index {} exceeds accounts len {}. Tx: {}", i, pumpswap_buy_instruction_accounts.len(), tx_id);
+            break;
+        }
         if let Some(token_data) = TOKEN_DB
             .get(pumpswap_buy_instruction_accounts[i].base_mint)
-            .unwrap()
+            .ok()
+            .flatten()
         {
             let updated_token_data = update_status_from_pumpswap_buy_event(
                 token_data.clone(),
@@ -90,9 +96,15 @@ pub async fn handle_trade_events(
     }
 
     for (i, pumpswap_sell_event) in pumpswap_sell_events.iter().enumerate() {
+        // Bounds check: ensure accounts vec has matching entry
+        if i >= pumpswap_sell_instruction_accounts.len() {
+            error!("[PARSE_FAIL] Sell event index {} exceeds accounts len {}. Tx: {}", i, pumpswap_sell_instruction_accounts.len(), tx_id);
+            break;
+        }
         if let Some(token_data) = TOKEN_DB
             .get(pumpswap_sell_instruction_accounts[i].base_mint)
-            .unwrap()
+            .ok()
+            .flatten()
         {
             let updated_token_data = update_status_from_pumpswap_sell_event(
                 token_data,
