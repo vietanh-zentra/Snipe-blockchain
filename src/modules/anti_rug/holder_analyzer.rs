@@ -46,6 +46,8 @@ pub async fn analyze_holders(
 async fn fetch_holder_concentration(
     mint: &Pubkey,
 ) -> Result<HolderAnalysis, Box<dyn std::error::Error + Send + Sync>> {
+    use crate::constants::addresses::{PUMPSWAP_PROGRAM_ID, PUMPFUN_PROGRAM_ID};
+
     // Lấy top 20 largest token accounts (lấy dư để chính xác hơn)
     let largest_accounts = RPC_CLIENT
         .get_token_largest_accounts(mint)
@@ -67,9 +69,46 @@ async fn fetch_holder_concentration(
         return Err("Total supply is zero".into());
     }
 
+    // Tạo danh sách LP pool PDA addresses cần loại bỏ
+    let mut excluded_addresses: Vec<Pubkey> = Vec::new();
+
+    // PumpSwap pool PDA (seed: "pool" + mint + WSOL)
+    let (pda1, _) = Pubkey::find_program_address(
+        &[b"pool", mint.as_ref(), crate::constants::addresses::WSOL.as_ref()],
+        &PUMPSWAP_PROGRAM_ID,
+    );
+    excluded_addresses.push(pda1);
+
+    // Reverse order pool PDA (seed: "pool" + WSOL + mint)
+    let (pda2, _) = Pubkey::find_program_address(
+        &[b"pool", crate::constants::addresses::WSOL.as_ref(), mint.as_ref()],
+        &PUMPSWAP_PROGRAM_ID,
+    );
+    excluded_addresses.push(pda2);
+
+    // PumpFun bonding curve PDA
+    let (pda3, _) = Pubkey::find_program_address(
+        &[b"bonding-curve", mint.as_ref()],
+        &PUMPFUN_PROGRAM_ID,
+    );
+    excluded_addresses.push(pda3);
+
+    // Lọc bỏ LP pool accounts, chỉ giữ ví thật
+    let filtered_accounts: Vec<_> = largest_accounts
+        .iter()
+        .filter(|acc| {
+            if let Ok(pubkey) = acc.address.parse::<Pubkey>() {
+                // Loại account nếu address là PDA đã biết
+                !excluded_addresses.contains(&pubkey)
+            } else {
+                true
+            }
+        })
+        .collect();
+
     // Tính top 10 holders (hoặc ít hơn nếu không đủ)
-    let top_n = largest_accounts.len().min(10);
-    let top10_sum: f64 = largest_accounts[..top_n]
+    let top_n = filtered_accounts.len().min(10);
+    let top10_sum: f64 = filtered_accounts[..top_n]
         .iter()
         .map(|acc| acc.amount.ui_amount.unwrap_or(0.0))
         .sum();
@@ -78,7 +117,7 @@ async fn fetch_holder_concentration(
 
     Ok(HolderAnalysis {
         top10_holder_pct: top10_pct,
-        holder_count: largest_accounts.len(),
+        holder_count: filtered_accounts.len(),
     })
 }
 

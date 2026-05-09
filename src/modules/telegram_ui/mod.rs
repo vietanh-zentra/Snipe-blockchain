@@ -569,7 +569,8 @@ async fn handle_callback(
         "ar_holder30" => { BOT_RUN_STATE.write().await.anti_rug.max_top10_holder_pct = 30.0; bot.send_message(chat_id, "Max holder: 30%").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
         "ar_holder40" => { BOT_RUN_STATE.write().await.anti_rug.max_top10_holder_pct = 40.0; bot.send_message(chat_id, "Max holder: 40%").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
         "ar_holder50" => { BOT_RUN_STATE.write().await.anti_rug.max_top10_holder_pct = 50.0; bot.send_message(chat_id, "Max holder: 50%").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
-        "ar_devage_2" => { BOT_RUN_STATE.write().await.anti_rug.min_wallet_age_hours = 2; bot.send_message(chat_id, "✅ M3 Dev Age: 2h").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
+        "ar_devage_0" => { BOT_RUN_STATE.write().await.anti_rug.min_wallet_age_hours = 0; bot.send_message(chat_id, "✅ M3 Dev Age: 0h (disabled)").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
+        "ar_devage_3" => { BOT_RUN_STATE.write().await.anti_rug.min_wallet_age_hours = 3; bot.send_message(chat_id, "✅ M3 Dev Age: 3h").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
         "ar_devage_6" => { BOT_RUN_STATE.write().await.anti_rug.min_wallet_age_hours = 6; bot.send_message(chat_id, "✅ M3 Dev Age: 6h").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
         "ar_devage_12" => { BOT_RUN_STATE.write().await.anti_rug.min_wallet_age_hours = 12; bot.send_message(chat_id, "✅ M3 Dev Age: 12h").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
         "ar_devage_24" => { BOT_RUN_STATE.write().await.anti_rug.min_wallet_age_hours = 24; bot.send_message(chat_id, "✅ M3 Dev Age: 24h").await?; send_anti_rug_menu(&bot, chat_id, &state).await?; }
@@ -580,32 +581,17 @@ async fn handle_callback(
                 }
                 Ok(rows) => {
                     let mut text = String::from("📋 <b>Skipped Tokens Log</b>\n\n");
-                    text.push_str("<pre>");
-                    text.push_str(&format!("{:<3} {:<14} {:<30} {}\n", "#", "Token", "Reason", "Time"));
-                    text.push_str(&format!("{}\n", "─".repeat(70)));
                     for (i, (mint, reason, time)) in rows.iter().enumerate() {
-                        let short_mint = if mint.len() > 12 {
-                            format!("{}..{}", &mint[..6], &mint[mint.len()-4..])
-                        } else {
-                            mint.clone()
-                        };
-                        let short_reason = if reason.len() > 28 {
-                            format!("{}..", &reason[..26])
-                        } else {
-                            reason.clone()
-                        };
-                        let short_time = if time.len() > 16 {
-                            time[5..16].to_string()
-                        } else {
-                            time.clone()
-                        };
-                        text.push_str(&format!("{:<3} {:<14} {:<30} {}\n", i + 1, short_mint, short_reason, short_time));
+                        text.push_str(&format!(
+                            "▸ <b>#{}</b>\n\
+                             🪙 <code>{}</code>\n\
+                             ⛔ <i>{}</i>\n\
+                             ⏰ {}\n\
+                             ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─\n",
+                            i + 1, mint, reason, time
+                        ));
                     }
-                    text.push_str("</pre>\n\n");
-                    text.push_str("💡 <i>Full mint address — tap row number below:</i>\n");
-                    for (i, (mint, _reason, _time)) in rows.iter().enumerate() {
-                        text.push_str(&format!("{}. <code>{}</code>\n", i + 1, mint));
-                    }
+                    text.push_str(&format!("\n📊 <b>Total: {}</b> tokens skipped", rows.len()));
                     bot.send_message(chat_id, text)
                         .parse_mode(teloxide::types::ParseMode::Html)
                         .await?;
@@ -1726,8 +1712,11 @@ async fn send_anti_rug_menu(
         ],
         // Row 4: Dev Age presets
         vec![
-            InlineKeyboardButton::callback(&format!("{}2h", d_sel(d_age, 2)), "ar_devage_2"),
+            InlineKeyboardButton::callback(&format!("{}0h", d_sel(d_age, 0)), "ar_devage_0"),
+            InlineKeyboardButton::callback(&format!("{}3h", d_sel(d_age, 3)), "ar_devage_3"),
             InlineKeyboardButton::callback(&format!("{}6h", d_sel(d_age, 6)), "ar_devage_6"),
+        ],
+        vec![
             InlineKeyboardButton::callback(&format!("{}12h", d_sel(d_age, 12)), "ar_devage_12"),
             InlineKeyboardButton::callback(&format!("{}24h", d_sel(d_age, 24)), "ar_devage_24"),
         ],
