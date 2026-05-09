@@ -362,7 +362,7 @@ async fn handle_message(
 
     bot.send_message(
         chat_id,
-        "Unknown command. Use the menu buttons, /myid, /menu, /wallets, /generate, /import_key, /select_N, /delete_N, /show_key_N",
+        "Unknown command. Use the menu buttons, /myid, /menu, /stats, /wallets, /generate, /import_key, /select_N, /delete_N, /show_key_N",
     )
     .await?;
     Ok(())

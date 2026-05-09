@@ -73,7 +73,7 @@ pub fn update_status_from_pumpswap_sell_event(
             sell_event.base_amount_in,
         );
 
-        token_data.token_balance -= sell_event.base_amount_in;
+        token_data.token_balance = token_data.token_balance.saturating_sub(sell_event.base_amount_in);
 
         if token_data.token_balance > 0 {
             let _ = TOKEN_DB.upsert(sell_accounts.base_mint.clone(), token_data.clone());
