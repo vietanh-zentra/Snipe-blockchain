@@ -554,6 +554,9 @@ async fn handle_callback(
             show_main_menu(&bot, chat_id, &state, q.message.as_ref()).await?;
         }
         // ── Anti-Rug toggle callbacks (Brief L555, L562, L669) ────────────
+        // TODO P8: Anti-rug config changes below are IN-MEMORY ONLY.
+        // On bot restart, all anti-rug settings reset to defaults (config.rs).
+        // To persist: add anti_rug_config table to DB schema + save on each toggle.
         "ar_master_toggle" => {
             let mut run = BOT_RUN_STATE.write().await;
             run.anti_rug.enabled = !run.anti_rug.enabled;

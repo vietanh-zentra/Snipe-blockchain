@@ -285,6 +285,7 @@ impl PumpSwapStruct {
         sell_amount: u64,
         updated_coin_creator: Pubkey,
         is_cashback_enabled: bool,
+        min_sol_output: u64,
     ) -> Instruction {
         //get custom accounts
         let user_base_token_account = get_associated_token_address_with_program_id(
@@ -313,7 +314,7 @@ impl PumpSwapStruct {
         //build instruction data
         let mut data = Vec::new();
 
-        let min_sol_out: u64 = 1;
+        let min_sol_out: u64 = min_sol_output;
 
         data.extend_from_slice(&SELL_DISCRIMINATOR);
         data.extend_from_slice(&sell_amount.to_le_bytes());

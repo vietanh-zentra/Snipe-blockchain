@@ -59,6 +59,8 @@ pub async fn execute_trade(trade_data: &DashMap<Pubkey, TokenDatabaseSchema>) {
             token_data.token_balance,
             token_data.token_creator,
             token_data.is_cashback_coin,
+            token_data.token_price,
+            run_state.trading.slippage,
         );
 
         // Send sell notification based on reason
@@ -324,8 +326,16 @@ pub fn execute_pumpswap_buy(
                         info!("[✅ BUY SUCCESS] Mint: {} | Hash: {}", mint_str, hash);
                         crate::modules::telegram_ui::alert_sender::alert_buy_confirmed(&mint_str, price, &hash);
 
-                        // ── Start Panic-Sell Monitor ONLY after buy confirmed ──
-                        if panic_sell_enabled && !watched_wallets.is_empty() {
+                        // P2 fix: Fetch actual token balance from TOKEN_DB
+                        // (gRPC event handler updates it after buy confirms)
+                        let actual_balance = crate::TOKEN_DB
+                            .get(token_mint)
+                            .ok()
+                            .flatten()
+                            .map(|td| td.token_balance)
+                            .unwrap_or(0);
+
+                        if panic_sell_enabled && !watched_wallets.is_empty() && actual_balance > 0 {
                             use crate::modules::anti_rug::panic_sell::{PanicSellContext, start_panic_sell_monitor};
 
                             info!(
@@ -337,7 +347,7 @@ pub fn execute_pumpswap_buy(
                                 token_mint,
                                 pumpswap_accounts: ps_copy,
                                 keypair: keypair_owned.insecure_clone(),
-                                token_balance,
+                                token_balance: actual_balance, // P2 fix: use live balance, not stale
                                 token_creator,
                                 is_cashback_coin: is_cashback_enabled,
                                 jito_tip_lamports: panic_sell_jito_tip,
@@ -379,15 +389,22 @@ pub fn execute_pumpswap_sell(
     sell_amount: u64,
     token_creator: Pubkey,
     is_cashback_enabled: bool,
+    token_price: f64,
+    slippage: f64,
 ) {
     let mut ps = *pumpswap_struct;
     let mut ix: Vec<Instruction> = Vec::new();
     let create_ix: Vec<Instruction> = ps.get_create_ata_idempotent_ix(signer_pubkey);
+    // P6 fix: Calculate min SOL output with slippage protection
+    // sell_amount = base units (6 decimals), token_price = SOL per token
+    let expected_sol_lamports = (sell_amount as f64 / 1e6) * token_price * 1e9;
+    let min_sol_out = (expected_sol_lamports * (100.0 - slippage) / 100.0).max(1.0) as u64;
     let sell_ix: Instruction = ps.get_sell_ix(
         signer_pubkey,
         sell_amount,
         token_creator,
         is_cashback_enabled,
+        min_sol_out,
     );
     let close_ix: Instruction = ps.close_wsol_ata(signer_pubkey);
 

@@ -95,6 +95,11 @@ pub fn migrate_info(
 
     infos.iter().for_each(|info| {
         if info.data.starts_with(&MIGRATE_DISCRIMINATOR) {
+            // P1 fix: bounds check to prevent panic on malformed TX
+            if info.accounts.len() < 24 || info.accounts.iter().any(|&a| (a as usize) >= account_keys.len()) {
+                error!("[PARSE_FAIL] Migrate IX: accounts bounds check failed ({}/24). Tx: {}", info.accounts.len(), tx_id);
+                return;
+            }
             let migrate_account = MigrateInstructionAccounts {
                 global: account_keys[info.accounts[0] as usize],
                 withdraw_authority: account_keys[info.accounts[1] as usize],
@@ -124,6 +129,11 @@ pub fn migrate_info(
 
             migrate_accounts.push(migrate_account);
         } else if info.data.starts_with(&CREATE_POOL_DISCRIMINATOR) {
+            // P1 fix: bounds check
+            if info.accounts.len() < 18 || info.accounts.iter().any(|&a| (a as usize) >= account_keys.len()) {
+                error!("[PARSE_FAIL] CreatePool IX: accounts bounds check failed ({}/18). Tx: {}", info.accounts.len(), tx_id);
+                return;
+            }
             let create_pool_account = CreatePoolInstructionAccounts {
                 pool: account_keys[info.accounts[0] as usize],
                 global_config: account_keys[info.accounts[1] as usize],
@@ -197,6 +207,11 @@ pub fn get_pumpswap_trade_info(
         if info.data.starts_with(&BUY_DISCRIMINATOR)
             || info.data.starts_with(&BUY_EXACT_QUOTE_IN_DISCRIMINATOR)
         {
+            // P1 fix: bounds check
+            if info.accounts.len() < 23 || info.accounts.iter().any(|&a| (a as usize) >= account_keys.len()) {
+                error!("[PARSE_FAIL] Buy IX: accounts bounds check failed ({}/23). Tx: {}", info.accounts.len(), tx_id);
+                return;
+            }
             let buy_account = PumpswapBuyInstructionAccounts {
                 pool: account_keys[info.accounts[0] as usize],
                 user: account_keys[info.accounts[1] as usize],
@@ -225,6 +240,11 @@ pub fn get_pumpswap_trade_info(
 
             buy_accounts.push(buy_account);
         } else if info.data.starts_with(&SELL_DISCRIMINATOR) {
+            // P1 fix: bounds check
+            if info.accounts.len() < 19 || info.accounts.iter().any(|&a| (a as usize) >= account_keys.len()) {
+                error!("[PARSE_FAIL] Sell IX: accounts bounds check failed ({}/19). Tx: {}", info.accounts.len(), tx_id);
+                return;
+            }
             let sell_account = PumpswapSellInstructionAccounts {
                 pool: account_keys[info.accounts[0] as usize],
                 user: account_keys[info.accounts[1] as usize],

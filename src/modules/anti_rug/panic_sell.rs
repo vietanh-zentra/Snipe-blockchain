@@ -214,6 +214,7 @@ async fn trigger_jito_panic_sell(ctx: &PanicSellContext) {
         ctx.token_balance,
         ctx.token_creator,
         ctx.is_cashback_coin,
+        1, // P3/P6: Emergency dump — accept ANY price (min 1 lamport)
     );
     let close_ix = ps.close_wsol_ata(&signer_pubkey);
 
@@ -237,7 +238,7 @@ async fn trigger_jito_panic_sell(ctx: &PanicSellContext) {
         Err(e) => {
             error!("[PANIC_SELL] Cannot get blockhash: {e}. Falling back to normal TX.");
             // Fallback: gửi via normal transaction (không có Jito tip)
-            ix.pop(); // Remove tip instruction
+            if ix.len() > 1 { ix.pop(); } // Remove tip instruction safely
             let keypair2 = ctx.keypair.insecure_clone();
             tokio::spawn(async move {
                 let _ = send_0slot_transaction(ix, keypair2).await;
@@ -264,7 +265,7 @@ async fn trigger_jito_panic_sell(ctx: &PanicSellContext) {
         Err(e) => {
             error!("[PANIC_SELL] Jito bundle failed: {e}. Falling back to normal TX.");
             // Fallback: remove tip, send via normal path
-            ix.pop(); // Remove tip instruction
+            if ix.len() > 1 { ix.pop(); } // Remove tip instruction safely
             let keypair2 = ctx.keypair.insecure_clone();
             tokio::spawn(async move {
                 let _ = send_0slot_transaction(ix, keypair2).await;
