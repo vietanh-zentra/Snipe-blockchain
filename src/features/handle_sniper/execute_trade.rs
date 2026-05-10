@@ -314,8 +314,58 @@ pub fn execute_pumpswap_buy(
                                     confirmed = true;
                                     break;
                                 } else {
-                                    // Transaction failed on-chain
-                                    info!("[❌ BUY FAILED] Mint: {} | Hash: {}", mint_str, hash);
+                                    // Transaction failed on-chain — retry up to 3 times
+                                    info!("[⚠️ BUY FAILED, RETRYING] Mint: {} | Hash: {}", mint_str, hash);
+                                    
+                                    let max_retries = 3;
+                                    for retry_num in 1..=max_retries {
+                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                        info!("[🔄 RETRY {}/{}] Mint: {}", retry_num, max_retries, mint_str);
+
+                                        let mut retry_ps = ps_copy;
+                                        let mut retry_ix: Vec<Instruction> = Vec::new();
+                                        retry_ix.extend(retry_ps.get_create_ata_idempotent_ix(&keypair_owned.pubkey()));
+                                        retry_ix.extend(retry_ps.get_wsol_ix(&keypair_owned.pubkey(), buy_amount_sol, slippage));
+                                        retry_ix.push(retry_ps.get_buy_ix(
+                                            &keypair_owned.pubkey(),
+                                            token_creator,
+                                            is_cashback_enabled,
+                                            price,
+                                            buy_amount_sol,
+                                            slippage,
+                                        ));
+                                        retry_ix.push(retry_ps.close_wsol_ata(&keypair_owned.pubkey()));
+
+                                        match send_0slot_transaction(retry_ix, keypair_owned.insecure_clone()).await {
+                                            Ok(Some(retry_hash)) => {
+                                                if let Ok(retry_sig) = Signature::from_str(&retry_hash) {
+                                                    let mut retry_ok = false;
+                                                    for _ in 0..15 {
+                                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                                        if let Ok(status) = RPC_CLIENT.get_signature_status(&retry_sig).await {
+                                                            if let Some(result) = status {
+                                                                if result.is_ok() {
+                                                                    retry_ok = true;
+                                                                    info!("[✅ BUY SUCCESS (retry {})] Mint: {} | Hash: {}", retry_num, mint_str, retry_hash);
+                                                                    crate::modules::telegram_ui::alert_sender::alert_buy_confirmed(&mint_str, price, &retry_hash);
+                                                                }
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                    if retry_ok {
+                                                        return; // Success — stop retrying
+                                                    }
+                                                    info!("[❌ RETRY {} FAILED] Mint: {} | Hash: {}", retry_num, mint_str, retry_hash);
+                                                }
+                                            }
+                                            _ => {
+                                                info!("[❌ RETRY {} submit failed] Mint: {}", retry_num, mint_str);
+                                            }
+                                        }
+                                    }
+                                    // All retries exhausted
+                                    info!("[❌ BUY FAILED (all retries)] Mint: {}", mint_str);
                                     crate::modules::telegram_ui::alert_sender::alert_buy_failed(&mint_str, &hash);
                                     return;
                                 }

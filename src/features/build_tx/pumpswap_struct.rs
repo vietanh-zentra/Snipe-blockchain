@@ -188,9 +188,11 @@ impl PumpSwapStruct {
         let mut data = Vec::new();
 
         // Official PumpSwap: buy(baseOut, maxQuoteIn)
-        // Apply slippage to BOTH: reduce base_out, increase max_quote_in
+        // base_out = 50% of expected tokens (aggressive buffer for fast price movement)
+        // max_quote_in = sol_amount + slippage buffer (ceiling for SOL spent)
+        // For sniping: competing bots push price up fast. 50% ensures tx success.
         let expected_tokens: f64 = (sol_amount / token_price) * 10f64.powi(6);
-        let base_out: u64 = (expected_tokens * (100.0 - slippage) / 100.0).max(1.0) as u64;
+        let base_out: u64 = (expected_tokens * 0.50).max(1.0) as u64;
         let max_quote_in: u64 = (sol_amount * 10f64.powi(9) * (100.0 + slippage) / 100.0) as u64;
 
         data.extend_from_slice(&BUY_DISCRIMINATOR);
