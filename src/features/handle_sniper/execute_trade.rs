@@ -348,6 +348,9 @@ pub fn execute_pumpswap_buy(
                                                                     retry_ok = true;
                                                                     info!("[✅ BUY SUCCESS (retry {})] Mint: {} | Hash: {}", retry_num, mint_str, retry_hash);
                                                                     crate::modules::telegram_ui::alert_sender::alert_buy_confirmed(&mint_str, price, &retry_hash);
+                                                                    // Log retry success to database
+                                                                    let mc = price * crate::TOKEN_TOTAL_SUPPLY as f64;
+                                                                    let _ = crate::modules::postgresql::db::log_trade(&mint_str, "buy", buy_amount_sol, price, mc, &retry_hash, "success").await;
                                                                 }
                                                                 break;
                                                             }
@@ -367,6 +370,9 @@ pub fn execute_pumpswap_buy(
                                     // All retries exhausted
                                     info!("[❌ BUY FAILED (all retries)] Mint: {}", mint_str);
                                     crate::modules::telegram_ui::alert_sender::alert_buy_failed(&mint_str, &hash);
+                                    // Log failed trade to database
+                                    let mc = price * crate::TOKEN_TOTAL_SUPPLY as f64;
+                                    let _ = crate::modules::postgresql::db::log_trade(&mint_str, "buy", buy_amount_sol, price, mc, &hash, "failed").await;
                                     return;
                                 }
                             }
@@ -375,6 +381,9 @@ pub fn execute_pumpswap_buy(
                     if confirmed {
                         info!("[✅ BUY SUCCESS] Mint: {} | Hash: {}", mint_str, hash);
                         crate::modules::telegram_ui::alert_sender::alert_buy_confirmed(&mint_str, price, &hash);
+                        // Log trade to database for PNL tracking
+                        let mc = price * crate::TOKEN_TOTAL_SUPPLY as f64;
+                        let _ = crate::modules::postgresql::db::log_trade(&mint_str, "buy", buy_amount_sol, price, mc, &hash, "success").await;
 
                         // P2 fix: Fetch actual token balance from TOKEN_DB
                         // (gRPC event handler updates it after buy confirms)
@@ -463,7 +472,23 @@ pub fn execute_pumpswap_sell(
     ix.push(close_ix);
 
     let keypair_owned = keypair.insecure_clone();
+    let mint_str = ps.base_mint.to_string();
+    let sell_sol_amount = (sell_amount as f64 / 1e6) * token_price;
+    let sell_price = token_price;
     tokio::spawn(async move {
-        let _ = send_0slot_transaction(ix, keypair_owned).await;
+        match send_0slot_transaction(ix, keypair_owned).await {
+            Ok(Some(hash)) => {
+                info!("[My Tx]        [Sell]        *Hash: {}        *mint: {}", hash, mint_str);
+                // Log sell trade to database for PNL tracking
+                let mc = sell_price * crate::TOKEN_TOTAL_SUPPLY as f64;
+                let _ = crate::modules::postgresql::db::log_trade(&mint_str, "sell", sell_sol_amount, sell_price, mc, &hash, "success").await;
+            }
+            Ok(None) => {
+                info!("[❌ SELL REJECTED] Mint: {}", mint_str);
+            }
+            Err(e) => {
+                info!("[❌ SELL ERROR] Mint: {} — {}", mint_str, e);
+            }
+        }
     });
 }

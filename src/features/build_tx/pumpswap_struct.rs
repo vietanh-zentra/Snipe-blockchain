@@ -122,9 +122,11 @@ impl PumpSwapStruct {
         buy_amount: f64,
         slippage: f64,
     ) -> Vec<Instruction> {
-        let slippage_calculated_buy_amount = buy_amount * 1e9 * (100.0 + slippage) / 100.0;
+        // Wrap 3x buy_amount to match max_quote_in ceiling in get_buy_ix
+        // Excess WSOL is returned when close_wsol_ata is called
+        let wsol_amount = buy_amount * 1e9 * 3.0;
         let turncated_slippage_calculated_buy_amount =
-            slippage_calculated_buy_amount.trunc() as u64;
+            wsol_amount.trunc() as u64;
         let wsol_ata = get_associated_token_address(signer_pubkey, &WSOL);
         let transfer_ix = system_instruction::transfer(
             signer_pubkey,
@@ -188,12 +190,12 @@ impl PumpSwapStruct {
         let mut data = Vec::new();
 
         // Official PumpSwap: buy(baseOut, maxQuoteIn)
-        // base_out = 50% of expected tokens (aggressive buffer for fast price movement)
-        // max_quote_in = sol_amount + slippage buffer (ceiling for SOL spent)
-        // For sniping: competing bots push price up fast. 50% ensures tx success.
+        // base_out = 100% of expected tokens (buy full intended SOL amount)
+        // max_quote_in = 3x sol_amount (handles up to 3x price movement)
+        // WSOL wrap = 3x (synced with max_quote_in)
         let expected_tokens: f64 = (sol_amount / token_price) * 10f64.powi(6);
-        let base_out: u64 = (expected_tokens * 0.50).max(1.0) as u64;
-        let max_quote_in: u64 = (sol_amount * 10f64.powi(9) * (100.0 + slippage) / 100.0) as u64;
+        let base_out: u64 = (expected_tokens * 1.0).max(1.0) as u64;
+        let max_quote_in: u64 = (sol_amount * 10f64.powi(9) * 3.0) as u64;
 
         data.extend_from_slice(&BUY_DISCRIMINATOR);
         data.extend_from_slice(&base_out.to_le_bytes());

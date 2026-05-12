@@ -1,5 +1,5 @@
 use crate::encryption::{decrypt_private_key, encrypt_private_key};
-use super::entities::{anti_rug_filter_log, skipped_tokens_log, trading_parameter, wallet};
+use super::entities::{anti_rug_filter_log, skipped_tokens_log, trade_history, trading_parameter, wallet};
 use super::migration::Migrator;
 use sea_orm::entity::prelude::*;
 use sea_orm::{ActiveValue::Set, Database, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
@@ -494,6 +494,135 @@ pub async fn query_filter_stats() -> PgResult<(FilterStats, FilterStats, FilterS
         if ts >= month_start { month.skipped += 1; }
         if ts >= week_start { week.skipped += 1; }
         if ts >= today_start { today.skipped += 1; }
+    }
+
+    Ok((today, week, month, all))
+}
+
+// ── Trade History Logging & PNL ───────────────────────────────────────────────
+
+/// Record a buy or sell trade into the database.
+pub async fn log_trade(
+    token_mint: &str,
+    trade_type: &str,   // "buy" or "sell"
+    sol_amount: f64,
+    token_price: f64,
+    mc_at_trade: f64,
+    tx_hash: &str,
+    status: &str,       // "success" or "failed"
+) -> PgResult<()> {
+    let db = get_shared_db().await?;
+    let active = trade_history::ActiveModel {
+        token_mint: Set(token_mint.to_string()),
+        trade_type: Set(trade_type.to_string()),
+        sol_amount: Set(sol_amount),
+        token_price: Set(token_price),
+        mc_at_trade: Set(mc_at_trade),
+        tx_hash: Set(tx_hash.to_string()),
+        status: Set(status.to_string()),
+        created_at: Set(chrono::Utc::now().into()),
+        ..Default::default()
+    };
+    active.insert(db).await?;
+    Ok(())
+}
+
+/// PNL stats for a time period.
+#[derive(Debug, Clone, Default)]
+pub struct TradePnlStats {
+    pub total_buys: i64,
+    pub total_sells: i64,
+    pub successful_buys: i64,
+    pub failed_buys: i64,
+    pub total_sol_spent: f64,      // sum of buy SOL
+    pub total_sol_received: f64,   // sum of sell SOL
+    pub realized_pnl: f64,         // received - spent
+    pub win_trades: i64,           // sells where received > avg_buy_cost
+    pub lose_trades: i64,
+    pub win_rate: f64,             // win / (win + lose) * 100
+}
+
+/// Query trade PNL stats for different time periods.
+/// Returns (today, 7d, 30d, all_time) stats.
+pub async fn query_trade_pnl_stats() -> PgResult<(TradePnlStats, TradePnlStats, TradePnlStats, TradePnlStats)> {
+    let db = get_shared_db().await?;
+    let now = chrono::Utc::now();
+    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+    let week_start = (now - chrono::Duration::days(7)).naive_utc();
+    let month_start = (now - chrono::Duration::days(30)).naive_utc();
+
+    let all_trades = trade_history::Entity::find()
+        .order_by_asc(trade_history::Column::CreatedAt)
+        .all(db)
+        .await?;
+
+    let mut today = TradePnlStats::default();
+    let mut week = TradePnlStats::default();
+    let mut month = TradePnlStats::default();
+    let mut all = TradePnlStats::default();
+
+    // Group sells by token_mint to calculate per-token PNL
+    // For each sell, find matching buy(s) for same mint to determine win/lose
+    use std::collections::HashMap;
+    let mut buy_costs: HashMap<String, Vec<f64>> = HashMap::new();
+
+    for trade in &all_trades {
+        let ts = trade.created_at.naive_utc();
+        let is_buy = trade.trade_type == "buy";
+        let is_success = trade.status == "success";
+
+        // Track buy costs per mint
+        if is_buy && is_success {
+            buy_costs
+                .entry(trade.token_mint.clone())
+                .or_default()
+                .push(trade.sol_amount);
+        }
+
+        let periods: Vec<(&mut TradePnlStats, bool)> = vec![
+            (&mut all, true),
+            (&mut month, ts >= month_start),
+            (&mut week, ts >= week_start),
+            (&mut today, ts >= today_start),
+        ];
+
+        for (stats, in_range) in periods {
+            if !in_range { continue; }
+
+            if is_buy {
+                stats.total_buys += 1;
+                if is_success {
+                    stats.successful_buys += 1;
+                    stats.total_sol_spent += trade.sol_amount;
+                } else {
+                    stats.failed_buys += 1;
+                }
+            } else if is_success {
+                stats.total_sells += 1;
+                stats.total_sol_received += trade.sol_amount;
+
+                // Determine win/lose: compare sell SOL with avg buy cost
+                if let Some(buys) = buy_costs.get(&trade.token_mint) {
+                    let avg_buy = buys.iter().sum::<f64>() / buys.len() as f64;
+                    if trade.sol_amount > avg_buy {
+                        stats.win_trades += 1;
+                    } else {
+                        stats.lose_trades += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    // Calculate derived fields
+    for stats in [&mut today, &mut week, &mut month, &mut all] {
+        stats.realized_pnl = stats.total_sol_received - stats.total_sol_spent;
+        let total_closed = stats.win_trades + stats.lose_trades;
+        stats.win_rate = if total_closed > 0 {
+            (stats.win_trades as f64 / total_closed as f64) * 100.0
+        } else {
+            0.0
+        };
     }
 
     Ok((today, week, month, all))

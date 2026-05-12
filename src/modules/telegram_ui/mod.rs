@@ -207,45 +207,25 @@ async fn handle_message(
     }
 
     if text.eq_ignore_ascii_case("/stats") {
-        match crate::modules::postgresql::db::query_filter_stats().await {
-            Ok((today, week, month, all)) => {
-                let fmt = |s: &crate::modules::postgresql::db::FilterStats, label: &str| -> String {
-                    let pass_rate = if s.total > 0 {
-                        format!("{:.1}%", (s.passed as f64 / s.total as f64) * 100.0)
-                    } else {
-                        "N/A".to_string()
-                    };
-                    format!(
-                        "📊 <b>{}</b>\n\
-                         ├ Total scanned: {}\n\
-                         ├ ✅ Passed: {}\n\
-                         ├ ❌ Failed: {}\n\
-                         ├ ⚠️ Warned: {}\n\
-                         ├ 🚫 Skipped: {}\n\
-                         └ Pass rate: {}\n",
-                        label, s.total, s.passed, s.failed, s.warned, s.skipped, pass_rate
-                    )
-                };
+        // Send inline keyboard for period selection
+        let keyboard = InlineKeyboardMarkup::new(vec![
+            vec![
+                InlineKeyboardButton::callback("📊 Today", "stats_today"),
+                InlineKeyboardButton::callback("📈 7 Days", "stats_week"),
+            ],
+            vec![
+                InlineKeyboardButton::callback("📅 30 Days", "stats_month"),
+                InlineKeyboardButton::callback("🌐 All Time", "stats_all"),
+            ],
+        ]);
 
-                let text = format!(
-                    "📈 <b>Bot Statistics</b>\n\
-                     ━━━━━━━━━━━━━━━━━\n\n\
-                     {}\n{}\n{}\n{}\n\
-                     <i>💡 PNL tracking coming soon</i>",
-                    fmt(&today, "Today"),
-                    fmt(&week, "Last 7 Days"),
-                    fmt(&month, "Last 30 Days"),
-                    fmt(&all, "All Time"),
-                );
-
-                bot.send_message(chat_id, text)
-                    .parse_mode(teloxide::types::ParseMode::Html)
-                    .await?;
-            }
-            Err(e) => {
-                bot.send_message(chat_id, format!("❌ Stats error: {e}")).await?;
-            }
-        }
+        bot.send_message(
+            chat_id,
+            "📊 <b>Select time period for stats:</b>",
+        )
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .reply_markup(keyboard)
+        .await?;
         return Ok(());
     }
 
@@ -397,6 +377,9 @@ async fn handle_callback(
     bot.answer_callback_query(q.id.clone()).await?;
 
     match data {
+        d if d.starts_with("stats_") => {
+            handle_stats_callback(&bot, chat_id, d).await?;
+        }
         "main_wallets" => {
             open_wallet_management(&bot, chat_id, &state, q.message.as_ref())
                 .await?;
@@ -1785,6 +1768,105 @@ async fn send_anti_rug_menu(
 
     bot.send_message(chat_id, text)
         .reply_markup(kb)
+        .await?;
+
+    Ok(())
+}
+
+/// Handle stats callback buttons (stats_today, stats_week, stats_month, stats_all)
+async fn handle_stats_callback(bot: &Bot, chat_id: ChatId, period: &str) -> BotResult {
+    use crate::modules::postgresql::db::{query_filter_stats, query_trade_pnl_stats};
+
+    let (filter_result, pnl_result) = tokio::join!(
+        query_filter_stats(),
+        query_trade_pnl_stats()
+    );
+
+    let (label, filter, pnl) = match (filter_result, pnl_result) {
+        (Ok((f_today, f_week, f_month, f_all)), Ok((p_today, p_week, p_month, p_all))) => {
+            match period {
+                "stats_today" => ("📊 Today", f_today, p_today),
+                "stats_week"  => ("📈 Last 7 Days", f_week, p_week),
+                "stats_month" => ("📅 Last 30 Days", f_month, p_month),
+                _             => ("🌐 All Time", f_all, p_all),
+            }
+        }
+        _ => {
+            bot.send_message(chat_id, "❌ Failed to load stats.").await?;
+            return Ok(());
+        }
+    };
+
+    let pass_rate = if filter.total > 0 {
+        format!("{:.1}%", (filter.passed as f64 / filter.total as f64) * 100.0)
+    } else {
+        "N/A".to_string()
+    };
+
+    let pnl_emoji = if pnl.realized_pnl >= 0.0 { "🟢" } else { "🔴" };
+    let pnl_sign = if pnl.realized_pnl >= 0.0 { "+" } else { "" };
+    let buy_success_rate = if pnl.total_buys > 0 {
+        format!("{:.1}%", (pnl.successful_buys as f64 / pnl.total_buys as f64) * 100.0)
+    } else {
+        "N/A".to_string()
+    };
+
+    let text = format!(
+        "<b>{label}</b>\n\
+         ━━━━━━━━━━━━━━━━━\n\n\
+         💰 <b>PNL Summary</b>\n\
+         ├ {pnl_emoji} Realized PNL: <b>{pnl_sign}{:.4} SOL</b>\n\
+         ├ 📤 Total spent: {:.4} SOL\n\
+         ├ 📥 Total received: {:.4} SOL\n\
+         ├ 🏆 Win rate: <b>{:.1}%</b> ({}/{})\n\
+         ├ ✅ Wins: {}\n\
+         └ ❌ Losses: {}\n\n\
+         📊 <b>Trade Activity</b>\n\
+         ├ Total buys: {} (✅ {} / ❌ {})\n\
+         ├ Buy success rate: {}\n\
+         └ Total sells: {}\n\n\
+         🛡️ <b>Anti-Rug Filter</b>\n\
+         ├ Scanned: {}\n\
+         ├ ✅ Passed: {}\n\
+         ├ ❌ Rejected: {}\n\
+         ├ ⚠️ Warned: {}\n\
+         ├ 🚫 Skipped: {}\n\
+         └ Pass rate: {}",
+        pnl.realized_pnl,
+        pnl.total_sol_spent,
+        pnl.total_sol_received,
+        pnl.win_rate,
+        pnl.win_trades,
+        pnl.win_trades + pnl.lose_trades,
+        pnl.win_trades,
+        pnl.lose_trades,
+        pnl.total_buys,
+        pnl.successful_buys,
+        pnl.failed_buys,
+        buy_success_rate,
+        pnl.total_sells,
+        filter.total,
+        filter.passed,
+        filter.failed,
+        filter.warned,
+        filter.skipped,
+        pass_rate,
+    );
+
+    let keyboard = InlineKeyboardMarkup::new(vec![
+        vec![
+            InlineKeyboardButton::callback("📊 Today", "stats_today"),
+            InlineKeyboardButton::callback("📈 7 Days", "stats_week"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("📅 30 Days", "stats_month"),
+            InlineKeyboardButton::callback("🌐 All Time", "stats_all"),
+        ],
+    ]);
+
+    bot.send_message(chat_id, text)
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .reply_markup(keyboard)
         .await?;
 
     Ok(())
