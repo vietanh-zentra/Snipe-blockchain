@@ -1,0 +1,14 @@
+#!/usr/bin/expect -f
+set timeout 30
+set pass "v)pio=0NZBoP"
+spawn ssh root@154.43.52.31 "grep ALLOWED_TELEGRAM_USER_ID /root/Snipe-blockchain/.env && echo '---' && systemctl is-active sniper-bot || echo 'service not running as systemd'"
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$pass\r"
+    }
+}
+expect eof

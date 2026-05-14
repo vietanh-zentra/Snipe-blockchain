@@ -1,0 +1,14 @@
+#!/usr/bin/expect -f
+set timeout 600
+set pass "v)pio=0NZBoP"
+spawn ssh root@154.43.52.31 "cd /root/Snipe-blockchain && source \$HOME/.cargo/env && cargo build --release --bin sniper_mode 2>&1 | tail -20"
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$pass\r"
+    }
+}
+expect eof

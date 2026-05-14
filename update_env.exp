@@ -1,0 +1,14 @@
+#!/usr/bin/expect -f
+set timeout -1
+set pass "v)pio=0NZBoP"
+spawn ssh root@154.43.52.31 "sed -i 's/ALLOWED_TELEGRAM_USER_ID=8516435053/ALLOWED_TELEGRAM_USER_ID=5123702171/' /root/Snipe-blockchain/.env && systemctl restart sniper-bot || true"
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$pass\r"
+    }
+}
+expect eof

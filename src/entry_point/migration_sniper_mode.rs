@@ -32,6 +32,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // FIX: Price Monitor — poll giá từ pool RPC mỗi 5s
+    // Đảm bảo SL/TP trigger kịp thời kể cả khi pool ít volume (ít gRPC event).
+    tokio::spawn(async {
+        run_price_monitor_loop().await;
+    });
+
+
     let grpc_config = GrpcClientConfig::new(GRPC_ENDPOINT.to_string(), GRPC_TOKEN.to_string());
 
     let subscribe_pumpfun_program_id = SubscribeRequestFilterTransactions {

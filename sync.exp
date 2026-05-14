@@ -1,0 +1,14 @@
+#!/usr/bin/expect -f
+set timeout -1
+set pass "v)pio=0NZBoP"
+spawn rsync -avz --exclude "target" --exclude ".git" ./ root@154.43.52.31:/root/Snipe-blockchain/
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$pass\r"
+    }
+}
+expect eof

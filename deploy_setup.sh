@@ -74,7 +74,7 @@ cat > "$ENV_FILE" << 'ENVEOF'
 # TELEGRAM BOT
 # ═══════════════════════════════════════════════════════════
 TELEGRAM_BOT_TOKEN=8623563315:AAELHdspKIN2O37l4H-xqBy8wwVKBW8u4e4
-ALLOWED_TELEGRAM_USER_ID=5123702171
+ALLOWED_TELEGRAM_USER_ID=8516435053
 
 # ═══════════════════════════════════════════════════════════
 # WALLET ENCRYPTION (DO NOT LOSE THIS!)

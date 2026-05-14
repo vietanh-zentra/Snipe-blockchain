@@ -52,7 +52,7 @@ Gõ trong chat bot:
 
 Bot sẽ trả lời:
 ```
-Your Telegram user id: 5123702171
+Your Telegram user id: 8516435053
 ```
 
 Nếu ID khớp với `.env` → bạn có quyền admin ✅
@@ -180,7 +180,7 @@ systemctl stop sniper-bot
 | Mục | Kiểm tra |
 |-----|----------|
 | Bot start trên Telegram | Thấy "Bot is started" |
-| /myid trả đúng ID | 5123702171 |
+| /myid trả đúng ID | 8516435053 |
 | Ví được tạo | /generate hoạt động |
 | Log hiện trên VPS | Thấy [ANTI-RUG] logs |
 | Telegram alert | Nhận message khi skip token |

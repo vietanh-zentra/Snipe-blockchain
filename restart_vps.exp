@@ -1,0 +1,14 @@
+#!/usr/bin/expect -f
+set timeout 30
+set pass "v)pio=0NZBoP"
+spawn ssh root@154.43.52.31 "systemctl restart sniper-bot && sleep 2 && systemctl status sniper-bot --no-pager | head -20"
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$pass\r"
+    }
+}
+expect eof

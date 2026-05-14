@@ -476,18 +476,109 @@ pub fn execute_pumpswap_sell(
     let sell_sol_amount = (sell_amount as f64 / 1e6) * token_price;
     let sell_price = token_price;
     tokio::spawn(async move {
-        match send_0slot_transaction(ix, keypair_owned).await {
+        match send_0slot_transaction(ix, keypair_owned.insecure_clone()).await {
             Ok(Some(hash)) => {
-                info!("[My Tx]        [Sell]        *Hash: {}        *mint: {}", hash, mint_str);
-                // Log sell trade to database for PNL tracking
-                let mc = sell_price * crate::TOKEN_TOTAL_SUPPLY as f64;
-                let _ = crate::modules::postgresql::db::log_trade(&mint_str, "sell", sell_sol_amount, sell_price, mc, &hash, "success").await;
+                use solana_sdk::signature::Signature;
+                use std::str::FromStr;
+                if let Ok(sig) = Signature::from_str(&hash) {
+                    let mut confirmed = false;
+                    for _ in 0..15 {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        if let Ok(status) = RPC_CLIENT.get_signature_status(&sig).await {
+                            if let Some(result) = status {
+                                if result.is_ok() {
+                                    confirmed = true;
+                                    break;
+                                } else {
+                                    // Sell failed on-chain — retry up to 3 times
+                                    info!("[⚠️ SELL FAILED, RETRYING] Mint: {} | Hash: {}", mint_str, hash);
+                                    let max_retries = 3;
+                                    for retry_num in 1..=max_retries {
+                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                        info!("[🔄 SELL RETRY {}/{}] Mint: {}", retry_num, max_retries, mint_str);
+                                        let mut retry_ps = ps;
+                                        let mut retry_ix: Vec<Instruction> = Vec::new();
+                                        retry_ix.extend(retry_ps.get_create_ata_idempotent_ix(&keypair_owned.pubkey()));
+                                        retry_ix.push(retry_ps.get_sell_ix(
+                                            &keypair_owned.pubkey(),
+                                            sell_amount,
+                                            token_creator,
+                                            is_cashback_enabled,
+                                            min_sol_out,
+                                        ));
+                                        retry_ix.push(retry_ps.close_wsol_ata(&keypair_owned.pubkey()));
+
+                                        match send_0slot_transaction(retry_ix, keypair_owned.insecure_clone()).await {
+                                            Ok(Some(retry_hash)) => {
+                                                if let Ok(retry_sig) = Signature::from_str(&retry_hash) {
+                                                    let mut retry_ok = false;
+                                                    for _ in 0..15 {
+                                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                                        if let Ok(status) = RPC_CLIENT.get_signature_status(&retry_sig).await {
+                                                            if let Some(result) = status {
+                                                                if result.is_ok() {
+                                                                    retry_ok = true;
+                                                                    info!("[✅ SELL SUCCESS (retry {})] Mint: {} | Hash: {}", retry_num, mint_str, retry_hash);
+                                                                    let mc = sell_price * crate::TOKEN_TOTAL_SUPPLY as f64;
+                                                                    let _ = crate::modules::postgresql::db::log_trade(&mint_str, "sell", sell_sol_amount, sell_price, mc, &retry_hash, "success").await;
+                                                                }
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                    if retry_ok {
+                                                        return; // Success
+                                                    }
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                    // All retries exhausted
+                                    info!("[❌ SELL FAILED (all retries)] Mint: {}", mint_str);
+                                    let mc = sell_price * crate::TOKEN_TOTAL_SUPPLY as f64;
+                                    let _ = crate::modules::postgresql::db::log_trade(&mint_str, "sell", sell_sol_amount, sell_price, mc, &hash, "failed").await;
+                                    
+                                    // RESET token_sell_status so it can retry next loop
+                                    if let Some(mut db_entry) = TOKEN_DB.get(ps.base_mint).ok().flatten() {
+                                        db_entry.token_sell_status = crate::TokenSellStatus::None;
+                                        let _ = TOKEN_DB.upsert(ps.base_mint, db_entry);
+                                    }
+                                    crate::modules::telegram_ui::alert_sender::send_telegram_alert(format!("❌ *SELL FAILED*\nToken: `{}`\nAll retries exhausted. Will retry next loop.", mint_str));
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    if confirmed {
+                        info!("[My Tx]        [Sell]        *Hash: {}        *mint: {}", hash, mint_str);
+                        let mc = sell_price * crate::TOKEN_TOTAL_SUPPLY as f64;
+                        let _ = crate::modules::postgresql::db::log_trade(&mint_str, "sell", sell_sol_amount, sell_price, mc, &hash, "success").await;
+                    } else {
+                        info!("[⏳ SELL UNCONFIRMED] Mint: {} | Hash: {}", mint_str, hash);
+                        // Reset status if unconfirmed so we try again
+                        if let Some(mut db_entry) = TOKEN_DB.get(ps.base_mint).ok().flatten() {
+                            db_entry.token_sell_status = crate::TokenSellStatus::None;
+                            let _ = TOKEN_DB.upsert(ps.base_mint, db_entry);
+                        }
+                    }
+                }
             }
             Ok(None) => {
                 info!("[❌ SELL REJECTED] Mint: {}", mint_str);
+                // Reset status
+                if let Some(mut db_entry) = TOKEN_DB.get(ps.base_mint).ok().flatten() {
+                    db_entry.token_sell_status = crate::TokenSellStatus::None;
+                    let _ = TOKEN_DB.upsert(ps.base_mint, db_entry);
+                }
             }
             Err(e) => {
                 info!("[❌ SELL ERROR] Mint: {} — {}", mint_str, e);
+                // Reset status
+                if let Some(mut db_entry) = TOKEN_DB.get(ps.base_mint).ok().flatten() {
+                    db_entry.token_sell_status = crate::TokenSellStatus::None;
+                    let _ = TOKEN_DB.upsert(ps.base_mint, db_entry);
+                }
             }
         }
     });

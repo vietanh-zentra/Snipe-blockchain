@@ -1,0 +1,14 @@
+#!/usr/bin/expect -f
+set timeout 30
+set pass "v)pio=0NZBoP"
+spawn ssh root@154.43.52.31 "journalctl -u sniper-bot -n 50 --no-pager"
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "password:" {
+        send "$pass\r"
+    }
+}
+expect eof
